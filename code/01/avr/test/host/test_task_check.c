@@ -1,6 +1,7 @@
 #include "test_task_check.h"
 
 #include <assert.h>
+#include <stdbool.h>
 #include <stdio.h>
 
 #include "flags.h"
@@ -8,19 +9,34 @@
 
 // This runs on the host machine, and has no AVR dependencies.
 
-static void test_click_requests_a_beep(void) {
-  printf("  [TEST] Click requests a beep... ");
+// Must match click_beeps[] in task_check.c.
+static const bool expected[] = {false, false, true, true, false};
+#define EXPECTED_LEN 5
 
+// Returns true if the click asked for a beep.
+static bool click(void) {
   sys_flags.btn_clicked = true;
   sys_flags.beep_request = false;
 
   task_check_process_click();
 
   assert(sys_flags.btn_clicked == false);
-  assert(sys_flags.beep_request == true);
-
+  bool requested = sys_flags.beep_request;
   sys_flags.beep_request = false;
+  return requested;
+}
+
+static void test_pattern_and_wraparound(void) {
+  printf("  [TEST] Clicks follow the pattern and wrap at 5... ");
+
+  // Two full passes: the counter must return to entry 0 after 5 clicks.
+  for (int pass = 0; pass < 2; pass++) {
+    for (int i = 0; i < EXPECTED_LEN; i++) {
+      assert(click() == expected[i]);
+    }
+  }
+
   printf("PASS\n");
 }
 
-void test_task_check(void) { test_click_requests_a_beep(); }
+void test_task_check(void) { test_pattern_and_wraparound(); }
