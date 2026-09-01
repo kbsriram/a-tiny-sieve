@@ -5,19 +5,10 @@
 #include <stdio.h>
 
 #include "flags.h"
+#include "mock_hal_gpio.h"
 #include "task/task_button.h"
 
 // This runs on the host machine, and has no AVR dependencies.
-
-// Flags the task shares with main.c and the ISRs on target.
-volatile system_flags_t sys_flags = {0};
-
-// Mock HAL dependencies for the task ----
-
-// true means the contact is closed (pin pulled low).
-static bool sim_button_pressed = false;
-
-bool hal_gpio_read_button(void) { return sim_button_pressed; }
 
 // Helpers ----
 
