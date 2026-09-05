@@ -17,4 +17,7 @@ void task_sieve_arm(void);
 // phase. Returns false (no veto) if disarmed.
 bool task_sieve_step(void);
 
+// Returns true if armed.
+bool task_sieve_is_armed(void);
+
 #endif  // TASK_SIEVE_H

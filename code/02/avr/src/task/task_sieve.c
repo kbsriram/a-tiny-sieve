@@ -42,3 +42,5 @@ bool task_sieve_step(void) {
 
   return !accept;
 }
+
+bool task_sieve_is_armed(void) { return s_armed; }
