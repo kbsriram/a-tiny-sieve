@@ -4,6 +4,7 @@
 #include "hal/hal_gpio.h"
 #include "hal/hal_rtc.h"
 #include "hal/hal_system.h"
+#include "hal/hal_twi.h"
 #include "task/task_sieve.h"
 
 int main(void) {
@@ -14,16 +15,10 @@ int main(void) {
 
   // --- Task Initialization ---
   task_sieve_reset();
-
-  // Hardcode a ring and arm at boot for this task.
-  // E.g., alternating bits: 10101010... -> 0xAA. Modulus 2.
-  uint8_t ring[16] = {0};
-  ring[0] = 0xAA;  // 10101010 in binary (accept odd, reject even, or whatever)
-  task_sieve_set_ring(2, ring);
-  task_sieve_arm();
+  hal_twi_init(I2C_ADDR);
 
   // --- Sleep Configuration MUST only go here---
-  set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+  set_sleep_mode(SLEEP_MODE_IDLE);
   sleep_enable();
 
   // -- enable interrupts
@@ -41,10 +36,16 @@ int main(void) {
       hal_gpio_set_veto(veto);
     }
 
+    uint8_t cmd_buf[18];
+    uint8_t cmd_len;
+    if (hal_twi_take_command(cmd_buf, &cmd_len)) {
+      task_sieve_control(cmd_buf, cmd_len);
+    }
+
     // 2. Sleep until next interrupt
-    // We cannot route the ring lookup through EVSYS/CCL, and power-down wake
-    // adds microseconds of latency. Power down ONLY when disarmed to meet
-    // timing.
+    // We cannot route the ring lookup through EVSYS/CCL, and sleep wake
+    // adds microseconds of latency. Sleep in IDLE ONLY when disarmed to meet
+    // timing and allow synchronous I2C data interrupts to fire.
     if (!task_sieve_is_armed()) {
       sleep_cpu();
     }

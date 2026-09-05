@@ -20,4 +20,7 @@ bool task_sieve_step(void);
 // Returns true if armed.
 bool task_sieve_is_armed(void);
 
+// Decode and execute an I2C command payload.
+void task_sieve_control(const uint8_t* buffer, uint8_t len);
+
 #endif  // TASK_SIEVE_H

@@ -8,9 +8,7 @@ static volatile bool req_event = false;
 void hal_gpio_init(void) {
   // Park unused pins to save power.
   // Protect PA0 which is UPDI.
-  PORTA.PIN1CTRL = PORT_ISC_INPUT_DISABLE_gc;
-  PORTA.PIN2CTRL = PORT_ISC_INPUT_DISABLE_gc;
-
+  // PA1 and PA2 are used for I2C (SDA, SCL), do not disable their inputs.
   // PA3 is LED output
   PORTA.DIRSET = PIN3_bm;
   PORTA.OUTCLR = PIN3_bm;

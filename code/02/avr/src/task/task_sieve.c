@@ -44,3 +44,17 @@ bool task_sieve_step(void) {
 }
 
 bool task_sieve_is_armed(void) { return s_armed; }
+
+void task_sieve_control(const uint8_t* buffer, uint8_t len) {
+  if (len == 0) return;
+
+  uint8_t cmd = buffer[0];
+  if (cmd == 0x01 && len >= 18) {
+    task_sieve_set_ring(buffer[1], &buffer[2]);
+  } else if (cmd == 0x02) {
+    task_sieve_reset();
+  } else if (cmd == 0x03) {
+    task_sieve_arm();
+  }
+}
+
