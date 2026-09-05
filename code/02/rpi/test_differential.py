@@ -1,26 +1,9 @@
 import time
 from machine import I2C, Pin
-import rp2
 import pins
 from sieve import Sieve
+from sieve_runner import SieveRunner
 import random
-
-@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW)
-def req_pulse():
-    wrap_target()
-    pull(block)
-    
-    # 50 kHz -> 20 us period at freq=5_000_000 (200 ns per cycle)
-    # HIGH Phase: 10 us total (50 cycles)
-    set(pins, 1) [31]   # 6.4 us
-    nop() [17]          # 3.6 us (total 10.0 us)
-    
-    # LOW Phase: 10 us total (50 cycles)
-    set(pins, 0) [31]   # 6.4 us
-    nop() [15]          # 3.2 us
-    in_(pins, 1)        # 0.2 us: sample VOTE at the end of low phase (19.8 us)
-    push(block)         # 0.2 us
-    wrap()
 
 def generate_ring(modulus, accept_rate=0.5):
     ring_bits = bytearray([0] * 16)
@@ -33,51 +16,46 @@ def generate_ring(modulus, accept_rate=0.5):
             expected_votes[i] = 1
     return ring_bits, expected_votes
 
-def test_moduli_configuration(sieves, sm, moduli, num_candidates=2000):
+def test_moduli_configuration(runner, moduli, num_candidates=10000):
     configs = []
-    for i, s in enumerate(sieves):
-        ring_bits, exp_votes = generate_ring(moduli[i], accept_rate=0.5)
-        configs.append((moduli[i], ring_bits, exp_votes))
+    py_configs = []
+    for mod in moduli:
+        ring_bits, exp_votes = generate_ring(mod, accept_rate=0.5)
+        configs.append((mod, ring_bits))
+        py_configs.append((mod, exp_votes))
         
-        s.reset()
-        time.sleep_ms(2)
-        s.set_ring(moduli[i], ring_bits)
-        time.sleep_ms(2)
-        
-    for s in sieves:
-        s.arm()
-        time.sleep_ms(2)
-        
-    num_bytes = (num_candidates + 7) // 8
-    expected_survivors = bytearray(num_bytes)
-    hardware_survivors = bytearray(num_bytes)
-    
-    expected_count = 0
+    # Precompute expected survivor candidate indices in Python
+    expected_survivors = []
     for k in range(num_candidates):
         survives = True
-        for mod, _, exp_votes in configs:
+        for mod, exp_votes in py_configs:
             if exp_votes[k % mod] == 0:
                 survives = False
                 break
         if survives:
-            expected_survivors[k // 8] |= (1 << (k % 8))
-            expected_count += 1
+            expected_survivors.append(k)
             
+    # Safely program, arm, and start the array via the orchestrator
+    runner.configure_array(configs, start_candidate=0)
+    
     t0 = time.ticks_us()
-    hardware_count = 0
-    for k in range(num_candidates):
-        sm.put(1)
-        vote_val = sm.get()
-        if vote_val != 0:
-            hardware_survivors[k // 8] |= (1 << (k % 8))
-            hardware_count += 1
+    n_expected = len(expected_survivors)
+    hardware_survivors = [runner.next_survivor() for _ in range(n_expected)]
     t_elapsed_us = time.ticks_diff(time.ticks_us(), t0)
-    rate_khz = (num_candidates * 1000) / t_elapsed_us if t_elapsed_us > 0 else 0
+    
+    last_cand = expected_survivors[-1] + 1 if expected_survivors else num_candidates
+    rate_khz = (last_cand * 1000) / t_elapsed_us if t_elapsed_us > 0 else 0
+    rej_rate = 100.0 * (1.0 - len(hardware_survivors) / last_cand) if last_cand > 0 else 0.0
     
     passed = (expected_survivors == hardware_survivors)
     status = "PASS" if passed else "FAIL"
-    print(f"[{status}] Moduli {moduli}: {num_candidates} checks in {t_elapsed_us/1000:.1f}ms "
-          f"({rate_khz:.2f} kHz), survivors={hardware_count}/{expected_count}")
+    print(f"[{status}] Moduli {moduli}: {n_expected} survivors in {last_cand} candidates "
+          f"({t_elapsed_us/1000:.1f}ms, {rate_khz:.2f} kHz, {rej_rate:.2f}% rejected)")
+    if not passed:
+        print(f"  Exp[:10]: {expected_survivors[:10]}")
+        print(f"  Got[:10]: {hardware_survivors[:10]}")
+        print(f"  Exp[-5:]: {expected_survivors[-5:]}")
+        print(f"  Got[-5:]: {hardware_survivors[-5:]}")
     return passed
 
 def main():
@@ -93,20 +71,19 @@ def main():
         print("No ATtiny sieves found on I2C bus.")
         return
         
-    sieves = [Sieve(i2c, addr, req_pin, vote) for addr in devices]
+    sieves = [Sieve(i2c, addr) for addr in devices]
     
-    # StateMachine at 5 MHz (100 cycles per pulse = 50 kHz hardware stepping)
-    sm = rp2.StateMachine(0, req_pulse, freq=5000000, set_base=req_pin, in_base=vote)
-    sm.active(1)
+    # Initialize SieveRunner as the array orchestrator
+    runner = SieveRunner(req_pin, vote, sieves=sieves, sm_id=0, freq=5000000)
     
-    num_candidates = 2000
+    num_candidates = 10000
     all_passed = True
     
     if len(sieves) == 1:
         test_moduli_list = [3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 47, 64, 97, 127]
         print(f"Testing 1 sieve across {len(test_moduli_list)} moduli ({num_candidates} checks each at 50kHz)...")
         for mod in test_moduli_list:
-            if not test_moduli_configuration(sieves, sm, [mod], num_candidates=num_candidates):
+            if not test_moduli_configuration(runner, [mod], num_candidates=num_candidates):
                 all_passed = False
     else:
         moduli_combos = [
@@ -117,7 +94,7 @@ def main():
         ]
         print(f"Testing {len(sieves)} sieves across {len(moduli_combos)} combos ({num_candidates} checks each at 50kHz)...")
         for combo in moduli_combos:
-            if not test_moduli_configuration(sieves, sm, combo, num_candidates=num_candidates):
+            if not test_moduli_configuration(runner, combo, num_candidates=num_candidates):
                 all_passed = False
                 
     if all_passed:
