@@ -1,4 +1,5 @@
 #include "task_sieve.h"
+#include "hal/hal_gpio.h"
 
 static uint8_t s_modulus = 1;
 static uint8_t s_bits[16] = {0};
@@ -8,6 +9,7 @@ static bool s_armed = false;
 void task_sieve_reset(void) {
   s_phase = 0;
   s_armed = false;
+  hal_gpio_set_veto(false);
 }
 
 void task_sieve_set_ring(uint8_t modulus, const uint8_t* bits) {
@@ -24,7 +26,10 @@ void task_sieve_set_ring(uint8_t modulus, const uint8_t* bits) {
   }
 }
 
-void task_sieve_arm(void) { s_armed = true; }
+void task_sieve_arm(void) {
+  s_armed = true;
+  hal_gpio_set_veto(false);
+}
 
 bool task_sieve_step(void) {
   if (!s_armed) {

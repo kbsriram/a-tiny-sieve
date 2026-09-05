@@ -3,14 +3,11 @@ from time import sleep_us
 import pins
 
 class Sieve:
-    def __init__(self, i2c: I2C, addr: int, req_pin: Pin, vote_pin: Pin):
+    def __init__(self, i2c: I2C, addr: int, req_pin: Pin = None, vote_pin: Pin = None):
         self.i2c = i2c
         self.addr = addr
         self.req = req_pin
         self.vote = vote_pin
-        
-        self.req.init(Pin.OUT, value=0)
-        self.vote.init(Pin.IN, Pin.PULL_UP)
 
     def set_ring(self, modulus: int, bits: bytearray):
         if len(bits) != 16:

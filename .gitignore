@@ -4,3 +4,4 @@
 *.elf
 *.hex
 test_runner
+__pycache__/

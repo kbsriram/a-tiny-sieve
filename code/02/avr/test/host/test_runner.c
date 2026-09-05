@@ -3,6 +3,15 @@
 #include <string.h>
 
 #include "task/task_sieve.h"
+#include "hal/hal_gpio.h"
+
+static bool s_mock_veto_state = false;
+static int s_mock_veto_set_count = 0;
+
+void hal_gpio_set_veto(bool veto) {
+  s_mock_veto_state = veto;
+  s_mock_veto_set_count++;
+}
 
 static void test_all_accept(void) {
   uint8_t bits[16];
@@ -90,6 +99,22 @@ static void test_modulus_bounds(void) {
   assert(task_sieve_step() == true);
 }
 
+static void test_veto_cleared_on_reset_and_arm(void) {
+  // Simulate line left in veto state by a prior step
+  s_mock_veto_state = true;
+  s_mock_veto_set_count = 0;
+
+  task_sieve_reset();
+  assert(s_mock_veto_state == false);
+  assert(s_mock_veto_set_count == 1);
+
+  // Set veto again to verify arm also releases it
+  s_mock_veto_state = true;
+  task_sieve_arm();
+  assert(s_mock_veto_state == false);
+  assert(s_mock_veto_set_count == 2);
+}
+
 int main(void) {
   printf("\nRunning Host Unit Tests\n");
   printf("-------------------------------\n");
@@ -100,6 +125,7 @@ int main(void) {
   test_single_set_bit();
   test_no_veto_disarmed();
   test_modulus_bounds();
+  test_veto_cleared_on_reset_and_arm();
 
   printf("-------------------------------\n");
   printf("SUCCESS: All tests passed.\n\n");
