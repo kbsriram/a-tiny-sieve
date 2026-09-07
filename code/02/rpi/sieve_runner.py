@@ -84,6 +84,19 @@ class SieveRunner:
         while self.sm.rx_fifo() > 0:
             self.sm.get()
 
+    def quiet_for(self, num_candidates: int) -> bool:
+        """Returns True if no survivor is reported while the sieve steps
+        num_candidates times. Only valid when no survivors are expected: the RX
+        FIFO holds two survivors, after which the PIO stalls and stops stepping.
+        """
+        period_us = 100 * 1_000_000 // self.freq
+        t0 = time.ticks_us()
+        budget_us = num_candidates * period_us + 1000
+        while time.ticks_diff(time.ticks_us(), t0) < budget_us:
+            if self.sm.rx_fifo() > 0:
+                return False
+        return True
+
     def set_counter(self, candidate: int = 0):
         """Initializes StateMachine entry point, seeds 64-bit counter, and activates."""
         self.pause()

@@ -14,6 +14,14 @@ def generate_ring(modulus, accept_rate=0.5):
             bit_idx = i % 8
             ring_bits[byte_idx] |= (1 << bit_idx)
             expected_votes[i] = 1
+    # Force at least one accept and one reject bit. An all-reject ring makes
+    # expected_survivors empty, and the hardware would never be read.
+    if sum(expected_votes) == 0:
+        ring_bits[0] |= 1
+        expected_votes[0] = 1
+    elif sum(expected_votes) == modulus:
+        ring_bits[0] &= ~1
+        expected_votes[0] = 0
     return ring_bits, expected_votes
 
 def test_moduli_configuration(runner, moduli, num_candidates=10000):
@@ -37,6 +45,14 @@ def test_moduli_configuration(runner, moduli, num_candidates=10000):
             
     # Safely program, arm, and start the array via the orchestrator
     runner.configure_array(configs, start_candidate=0)
+    
+    if not expected_survivors:
+        passed = runner.quiet_for(num_candidates)
+        runner.pause()
+        status = "PASS" if passed else "FAIL"
+        print(f"[{status}] Moduli {moduli}: 0 survivors expected "
+              f"in {num_candidates} candidates")
+        return passed
     
     t0 = time.ticks_us()
     n_expected = len(expected_survivors)

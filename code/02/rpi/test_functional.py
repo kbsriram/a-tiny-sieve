@@ -1,68 +1,91 @@
-import time
-from machine import I2C, Pin
-import pins
-from sieve import Sieve
+"""Degenerate ring patterns on one ATtiny, driven by the PIO runner.
 
-def test_ring(sieve, name, modulus, ring_bits_16bytes, expected_votes):
-    print(f"Testing {name}...")
-    sieve.reset()
-    sieve.set_ring(modulus, ring_bits_16bytes)
-    sieve.arm()
-    
-    num_steps = 2 * modulus + 5
-    
-    all_pass = True
-    for i in range(num_steps):
-        sieve.step()
-        time.sleep_us(1000)
-        
-        actual_vote = sieve.vote.value()
-        expected = expected_votes[i % modulus]
-        if actual_vote != expected:
-            print(f"FAIL at step {i} (phase {i%modulus}): expected VOTE={expected}, got {actual_vote}")
-            all_pass = False
-            
-    if all_pass:
-        print(f"PASS: {name}")
-    return all_pass
+check_16.py only loads the three real quadratic-residue rings and only sees
+the wired-AND of VOTE, so all-reject, all-accept, alternating and single-bit
+rings are not covered there. Every other chip on the bus is left disarmed.
+"""
+
+import time
+
+import machine
+
+import pins
+import sieve
+import sieve_runner
+
+MODULUS = 11
+NUM_CANDIDATES = 1000
+
+
+def run_case(runner, name, modulus, ring_bits, num_candidates=NUM_CANDIDATES):
+    accepts = [(ring_bits[i // 8] >> (i % 8)) & 1 for i in range(modulus)]
+    expected = [k for k in range(num_candidates) if accepts[k % modulus]]
+
+    runner.configure_array([(modulus, ring_bits)], start_candidate=0)
+
+    if not expected:
+        ok = runner.quiet_for(num_candidates)
+        runner.pause()
+        print(f"[{'PASS' if ok else 'FAIL'}] {name}: 0 survivors expected in "
+              f"{num_candidates} candidates")
+        return ok
+
+    t0 = time.ticks_us()
+    got = [runner.next_survivor() for _ in range(len(expected))]
+    elapsed_us = time.ticks_diff(time.ticks_us(), t0)
+    runner.pause()
+
+    ok = got == expected
+    print(f"[{'PASS' if ok else 'FAIL'}] {name}: {len(expected)} survivors in "
+          f"{num_candidates} candidates ({elapsed_us / 1000:.1f} ms)")
+    if not ok:
+        for i, (exp, act) in enumerate(zip(expected, got)):
+            if exp != act:
+                print(f"       first mismatch at survivor #{i}: "
+                      f"expected {exp}, got {act}")
+                break
+    return ok
+
 
 def main():
-    i2c = I2C(0, scl=Pin(pins.PIN_SCL), sda=Pin(pins.PIN_SDA), freq=400000)
-    req = Pin(pins.PIN_REQ, Pin.OUT)
-    vote = Pin(pins.PIN_VOTE, Pin.IN, Pin.PULL_UP)
-    
-    s = Sieve(i2c, 0x20, req, vote)
-    
-    modulus = 11
-    
-    # 1. All-accept (all 1s)
-    ring_all_accept = bytearray([0xFF] * 16)
-    exp_all_accept = [1] * modulus
-    
-    # 2. All-reject (all 0s)
-    ring_all_reject = bytearray([0x00] * 16)
-    exp_all_reject = [0] * modulus
-    
-    # 3. Alternating (0xAA) = 10101010
-    ring_alternating = bytearray([0xAA] * 16)
-    exp_alternating = [ (1 if (i % 2 != 0) else 0) for i in range(modulus) ]
-    
-    # 4. Single set bit (e.g. only bit 2 is set)
-    ring_single = bytearray([0x00] * 16)
-    ring_single[0] = 0x04
-    exp_single = [ (1 if i == 2 else 0) for i in range(modulus) ]
-    
-    print(f"Running functional tests with modulus={modulus} at ~1kHz...")
-    all_pass = True
-    all_pass &= test_ring(s, "All-accept", modulus, ring_all_accept, exp_all_accept)
-    all_pass &= test_ring(s, "All-reject", modulus, ring_all_reject, exp_all_reject)
-    all_pass &= test_ring(s, "Alternating", modulus, ring_alternating, exp_alternating)
-    all_pass &= test_ring(s, "Single set bit", modulus, ring_single, exp_single)
-    
-    if all_pass:
-        print("\nALL TESTS PASSED.")
-    else:
-        print("\nSOME TESTS FAILED.")
+    i2c = machine.I2C(0, scl=machine.Pin(pins.PIN_SCL),
+                      sda=machine.Pin(pins.PIN_SDA), freq=400000)
+    req = machine.Pin(pins.PIN_REQ, machine.Pin.OUT)
+    vote = machine.Pin(pins.PIN_VOTE, machine.Pin.IN, machine.Pin.PULL_UP)
 
-if __name__ == '__main__':
+    devices = [d for d in i2c.scan() if d != 0x3C]
+    if not devices:
+        print("No ATtiny sieves found.")
+        return
+
+    nodes = [sieve.Sieve(i2c, addr) for addr in devices]
+    # Disarm every chip so only the one under test can pull VOTE low.
+    for node in nodes:
+        node.reset()
+        time.sleep_ms(2)
+
+    runner = sieve_runner.SieveRunner(req, vote, sieves=nodes[:1], sm_id=0,
+                                      freq=5000000)
+    print(f"Testing {hex(devices[0])} at modulus {MODULUS}, "
+          f"{NUM_CANDIDATES} candidates per case at 50 kHz "
+          f"({len(nodes) - 1} other chip(s) disarmed)...")
+
+    single_bit = bytearray(16)
+    single_bit[0] = 0x04  # accept only phase 2
+
+    cases = [
+        ("All-accept", bytearray([0xFF] * 16)),
+        ("All-reject", bytearray(16)),
+        ("Alternating", bytearray([0xAA] * 16)),
+        ("Single set bit", single_bit),
+    ]
+
+    all_pass = True
+    for name, ring_bits in cases:
+        all_pass &= run_case(runner, name, MODULUS, ring_bits)
+
+    print("\nALL TESTS PASSED." if all_pass else "\nSOME TESTS FAILED.")
+
+
+if __name__ == "__main__":
     main()
