@@ -7,6 +7,7 @@ Survivors are tested for exact squares to find Lehmer's factors.
 import time
 from machine import I2C, Pin
 import pins
+import ssd1306
 from sieve import Sieve
 from sieve_runner import SieveRunner
 
@@ -16,6 +17,7 @@ RUN_FULL = True  # Mode B: Full streaming hunt to completion
 
 M = 5283065753709209
 MODULI = [5, 11, 23]
+DISP_ADDR = 0x3C  # SSD1306 OLED shares the ATtiny I2C bus
 MAX_K = 6868058  # y = 4k <= isqrt(M // 7) = 27472234
 
 # Fast modulo 64 quadratic residue filter
@@ -65,6 +67,29 @@ def make_ring(p, m_val=M):
     return bits, expected_phases
 
 
+def make_display(i2c, devices):
+    """Returns a 128x64 SSD1306 if one answered the bus scan, else None."""
+    if DISP_ADDR not in devices:
+        return None
+    oled = ssd1306.SSD1306_I2C(128, 64, i2c, addr=DISP_ADDR)
+    oled.fill(0)
+    oled.show()
+    return oled
+
+
+def show(oled, *lines):
+    """Redraws the panel, one 8x8 text line per argument (6 lines max).
+
+    Costs ~25 ms: 1024 framebuffer bytes at 400 kHz. Call it sparingly.
+    """
+    if oled is None:
+        return
+    oled.fill(0)
+    for row, line in enumerate(lines):
+        oled.text(line, 0, row * 10)
+    oled.show()
+
+
 def setup_hardware():
     i2c = I2C(0, scl=Pin(pins.PIN_SCL), sda=Pin(pins.PIN_SDA), freq=400000)
     req = Pin(pins.PIN_REQ, Pin.OUT)
@@ -72,7 +97,9 @@ def setup_hardware():
 
     # Dynamically discover the number of connected tinys with a scan on the i2c bus.
     # 0x3C is a display, which we skip.
-    devices = [d for d in i2c.scan() if d != 0x3C]
+    found = i2c.scan()
+    oled = make_display(i2c, found)
+    devices = [d for d in found if d != DISP_ADDR]
     if len(devices) < len(MODULI):
         raise RuntimeError(
             f"Found {len(devices)} ATtinys ({[hex(d) for d in devices]}), need {len(MODULI)}"
@@ -88,10 +115,10 @@ def setup_hardware():
         configs.append((p, bits))
         oracle_accepts[p] = set(exp_phases)
 
-    return runner, configs, oracle_accepts
+    return runner, configs, oracle_accepts, oled
 
 
-def verify_sample(runner, configs, oracle_accepts, num_candidates=10000):
+def verify_sample(runner, configs, oracle_accepts, oled=None, num_candidates=10000):
     """Mode A: Verifies hardware survivors strictly match mathematical expectation."""
     print(f"\n--- Mode A: Lint & Verification (first {num_candidates} candidates) ---")
     expected = [
@@ -103,6 +130,7 @@ def verify_sample(runner, configs, oracle_accepts, num_candidates=10000):
         f"Expecting {len(expected)} survivors ({100.0 * len(expected) / num_candidates:.2f}% pass rate)..."
     )
 
+    show(oled, "MODE A", "verifying", f"{num_candidates:,} cands")
     runner.configure_array(configs, start_candidate=0)
     t0 = time.ticks_us()
     hw_survivors = [runner.next_survivor() for _ in range(len(expected))]
@@ -112,6 +140,13 @@ def verify_sample(runner, configs, oracle_accepts, num_candidates=10000):
     passed = hw_survivors == expected
     rate_khz = (num_candidates * 1000) / elapsed_us if elapsed_us > 0 else 0
 
+    show(
+        oled,
+        "MODE A",
+        "PASS" if passed else "FAIL",
+        f"{num_candidates:,} cands",
+        f"{rate_khz:.1f} kHz",
+    )
     if passed:
         print(
             f"PASS: 100% agreement over {num_candidates} candidates ({elapsed_us/1000:.1f} ms, {rate_khz:.2f} kHz)."
@@ -125,7 +160,7 @@ def verify_sample(runner, configs, oracle_accepts, num_candidates=10000):
     return passed
 
 
-def run_full(runner, configs, max_k=MAX_K):
+def run_full(runner, configs, oled=None, max_k=MAX_K):
     """Mode B: Streams survivors at 50 kHz to find representations x^2 + 7y^2 = M."""
     print(f"\n--- Mode B: Full-Speed Sieve Hunt (k = 0 .. {max_k}) ---")
     print(f"Target: M = {M}")
@@ -211,6 +246,13 @@ def run_full(runner, configs, max_k=MAX_K):
                     f"\n>>> FOUND REPRESENTATION: M = {x}^2 + 7 * {y}^2 (k = {k}, {t_found/1000:.2f}s) <<<"
                 )
                 solutions.append((x, y))
+                show(
+                    oled,
+                    f"FOUND {len(solutions)}/2",
+                    f"x {x}",
+                    f"y {y}",
+                    f"{t_found / 1000:.1f}s",
+                )
 
                 if len(solutions) == 2:
                     # Euler two-squares factorization: gcd(M, x1*y2 + x2*y1)
@@ -228,6 +270,13 @@ def run_full(runner, configs, max_k=MAX_K):
                     print(f"Verification: {f1} * {f2} == {f1 * f2} ({f1 * f2 == M})")
                     print("=" * 60)
                     print_stats("FINAL TIMING & BENCHMARK SUMMARY")
+                    show(
+                        oled,
+                        "FACTORED",
+                        str(f1),
+                        str(f2),
+                        f"{t_total / 1000:.1f}s",
+                    )
                     break
 
             now = time.ticks_ms()
@@ -244,6 +293,15 @@ def run_full(runner, configs, max_k=MAX_K):
                     f"chk: {avg_chk_us:.1f}us/cand | "
                     f"sieve: {total_sieve_us/1000:.0f}ms, filter: {total_check_us/1000:.0f}ms | {elapsed_s:.1f}s"
                 )
+                show(
+                    oled,
+                    "SIEVE 3 MODULI",
+                    f"k {k:,}",
+                    f"of {max_k:,}",
+                    f"{progress_pct:.1f}%  {elapsed_s:.0f}s",
+                    f"surv {survivors_tested:,}",
+                    f"found {len(solutions)}/2",
+                )
                 last_report = now
 
     except KeyboardInterrupt:
@@ -254,16 +312,16 @@ def run_full(runner, configs, max_k=MAX_K):
 
 
 def main():
-    runner, configs, oracle_accepts = setup_hardware()
+    runner, configs, oracle_accepts, oled = setup_hardware()
 
     if RUN_VERIFY:
-        ok = verify_sample(runner, configs, oracle_accepts, num_candidates=10000)
+        ok = verify_sample(runner, configs, oracle_accepts, oled, num_candidates=10000)
         if not ok and RUN_FULL:
             print("Aborting full run due to lint failure.")
             return
 
     if RUN_FULL:
-        run_full(runner, configs, max_k=MAX_K)
+        run_full(runner, configs, oled, max_k=MAX_K)
 
 
 if __name__ == "__main__":
