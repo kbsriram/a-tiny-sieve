@@ -1,12 +1,14 @@
 # A tiny sieve
 
-Code for [A Tiny Sieve: Lehmer's math machine in ATtinys](https://hackaday.io/project/206556-a-tiny-sieve-lehmers-math-machine-in-attinys).
+Software and hardware for [A Tiny Sieve: Lehmer's math machine in ATtinys](https://hackaday.io/project/206556-a-tiny-sieve-lehmers-math-machine-in-attinys).
 
 A number sieve rejects candidate integers that cannot solve a quadratic
 equation, using arithmetic modulo small primes. One ATtiny412 holds one
 modulus. They share one open-drain line: any chip that rejects pulls it low, so
 the line stays high only when no chip rejected. A Raspberry Pi Pico clocks them
 and checks whatever survives.
+
+# Software
 
 One directory per build log, each with its own README:
 
@@ -21,3 +23,8 @@ Every build has an `avr/` half (ATtiny412 firmware in C, avr-gcc) and an `rpi/`
 half (Pico host code). The Pico runtime differs per build — build 01 is
 CircuitPython, build 02 is MicroPython — so check the build's README before
 copying files to a board.
+
+# Hardware
+
+- [hardware/modulus](hardware/modulus) is an ATtiny412 on a card that plugs into the sieve backplane. Gerbers, Altium source files and JLCPCB BOM and pick-and-place are available.
+
