@@ -1,6 +1,6 @@
 CC      = gcc
 
-CFLAGS  = -Wall -Wextra -Werror -std=c99 -I../../src -g -DTEST_LIB
+CFLAGS  = -Wall -Wextra -Werror -std=c99 -I../../src -g -DTEST_LIB -DVECTORS_PATH='"../ref/vectors_sieve.txt"'
 
 SRCS_TASK = $(wildcard ../../src/task/*.c)
 SRCS_TEST = $(wildcard *.c)

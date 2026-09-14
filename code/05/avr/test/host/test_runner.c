@@ -2,6 +2,7 @@
 #include <stdio.h>
 
 #include "task/task_reset.h"
+#include "test_sieve.h"
 
 // RSTCTRL.RSTFR bit masks, datasheet ch10.
 #define PORF 0x01
@@ -33,6 +34,7 @@ int main(void) {
   printf("--------------------------------------\n");
 
   test_reset_pulse_count();
+  test_sieve();
 
   printf("--------------------------------------\n");
   printf("SUCCESS: All tests passed.\n\n");
