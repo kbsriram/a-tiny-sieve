@@ -2,6 +2,7 @@
 #include <stdio.h>
 
 #include "task/task_reset.h"
+#include "test_cmd.h"
 #include "test_sieve.h"
 
 // RSTCTRL.RSTFR bit masks, datasheet ch10.
@@ -35,6 +36,7 @@ int main(void) {
 
   test_reset_pulse_count();
   test_sieve();
+  test_cmd();
 
   printf("--------------------------------------\n");
   printf("SUCCESS: All tests passed.\n\n");
