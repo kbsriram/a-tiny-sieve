@@ -19,6 +19,10 @@ CFLAGS  = -mmcu=$(MCU_TARGET) -DF_CPU=$(F_CPU) -DI2C_ADDR=$(ADDR) -Os -Wall -Wex
 CFLAGS += -funsigned-char -funsigned-bitfields -fpack-struct -fshort-enums
 CFLAGS += $(INCS) -MMD -MP
 
+# The REQ handler in hal_gpio.c owns r2, r4 and the X pointer (r26:r27) and
+# keeps them live between interrupts. Every translation unit must reserve them.
+CFLAGS += -ffixed-r2 -ffixed-r4 -ffixed-r26 -ffixed-r27
+
 LDFLAGS = -mmcu=$(MCU_TARGET)
 
 # Finds all .c files in the defined subdirectories

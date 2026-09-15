@@ -19,18 +19,18 @@ void task_sieve_reset(void);
 // outside TASK_SIEVE_MODULUS_MIN..TASK_SIEVE_MODULUS_MAX and changes nothing.
 bool task_sieve_set_ring(uint8_t modulus, const uint8_t *ring);
 
-// ARM: starts stepping at `phase`. Rejects a phase at or above the modulus,
-// and rejects any phase when no ring is loaded; changes nothing when rejected.
+// ARM: validates `phase` and records that the card is armed. Rejects a phase
+// at or above the modulus, and rejects any phase when no ring is loaded;
+// changes nothing when rejected. The live phase belongs to hal_gpio: the REQ
+// handler advances it, and hal_gpio_phase() reads it back.
 bool task_sieve_arm(uint8_t phase);
 
-// One REQ rising edge: returns the decision for the current phase, then
-// advances the phase, wrapping at the modulus. True releases VOTE (ring bit
-// set), false drives VOTE low. While disarmed it returns true and the phase
-// does not move.
-bool task_sieve_step(void);
+// Decision for one phase of the loaded ring: true releases VOTE, false drives
+// VOTE low. Ring bit `phase` is bit (phase % 8) of ring[phase / 8]. Reads the
+// ring loaded by task_sieve_set_ring(); the result is meaningless before that.
+bool task_sieve_release(uint8_t phase);
 
 // Status read fields.
-uint8_t task_sieve_phase(void);
 uint8_t task_sieve_modulus(void);  // 0 when no ring is loaded.
 bool task_sieve_armed(void);
 

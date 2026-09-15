@@ -1,7 +1,31 @@
 #ifndef HAL_GPIO_H
 #define HAL_GPIO_H
 
+#include <stdint.h>
+
+// Pins for one card: PA6 REQ in, PA3 VOTE out, PA7 LED out.
+// See 05_avr_design.md, sections Pins, VOTE and LED, and Run path.
+
+// Configures every pin, leaves VOTE high-impedance, the LED dark and the card
+// disarmed. Call before sei().
 void hal_gpio_init(void);
-void hal_gpio_toggle_pa7(void);
+
+// Expands the ring held by task_sieve into one VPORTA.DIR byte per phase, the
+// table the REQ handler indexes. The handler has no time to unpack a bit, so
+// every phase's pin state must already be a byte in SRAM. Call after every
+// accepted SET_RING, before arming.
+void hal_gpio_set_ring(void);
+
+// Starts stepping at `phase`: loads the handler's registers, then enables the
+// PA6 rising-edge interrupt. `phase` must be below the loaded modulus, and
+// hal_gpio_set_ring() must have run since the last SET_RING.
+void hal_gpio_arm(uint8_t phase);
+
+// Disables the PA6 edge, releases VOTE and darkens the LED. The phase stops
+// where it was; a later hal_gpio_arm() chooses where it resumes.
+void hal_gpio_disarm(void);
+
+// Phase the next REQ rising edge will act on. Status-read byte 0.
+uint8_t hal_gpio_phase(void);
 
 #endif  // HAL_GPIO_H

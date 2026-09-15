@@ -26,6 +26,10 @@ static void parse_ring(const char *hex, uint8_t *ring) {
 }
 
 // Replays every case in the committed vectors file from the Python model.
+//
+// The card advances the phase in the REQ handler's assembly, not here, so the
+// walk below is the test's own. What task_sieve owns, and what this checks, is
+// the decision for a given phase.
 static void test_vectors(void) {
   FILE *f = fopen(VECTORS_PATH, "r");
   if (f == NULL) {
@@ -58,14 +62,16 @@ static void test_vectors(void) {
     assert(task_sieve_set_ring((uint8_t)modulus, ring));
     assert(task_sieve_arm((uint8_t)arm_phase));
 
+    unsigned phase = arm_phase;
     for (unsigned i = 0; i < steps; i++) {
-      const bool got = task_sieve_step();
+      const bool got = task_sieve_release((uint8_t)phase);
       const bool want = (decisions[i] == '1');
       if (got != want) {
         printf("FAIL: modulus %u arm %u step %u: got %d want %d\n", modulus,
                arm_phase, i, (int)got, (int)want);
         assert(got == want);
       }
+      phase = (phase + 1) % modulus;
     }
     cases++;
   }
@@ -74,11 +80,10 @@ static void test_vectors(void) {
   printf("  %d ring vector cases\n", cases);
 }
 
-// Modulus and phase limits, and the disarmed path.
+// Modulus and phase limits.
 static void test_limits(void) {
   task_sieve_reset();
   assert(task_sieve_modulus() == 0);
-  assert(task_sieve_phase() == 0);
   assert(!task_sieve_armed());
 
   // No ring loaded: ARM is rejected.
@@ -101,71 +106,55 @@ static void test_limits(void) {
   assert(!task_sieve_armed());
   assert(task_sieve_arm(29));
   assert(task_sieve_armed());
-  assert(task_sieve_phase() == 29);
 
-  // SET_RING disarms and zeroes the phase.
+  // SET_RING disarms.
   assert(task_sieve_set_ring(30, k_ring_all_clear));
   assert(!task_sieve_armed());
-  assert(task_sieve_phase() == 0);
 
   // RESET clears the ring as well.
   assert(task_sieve_arm(5));
   task_sieve_reset();
   assert(task_sieve_modulus() == 0);
-  assert(task_sieve_phase() == 0);
   assert(!task_sieve_armed());
 }
 
-// Disarmed: VOTE released, phase frozen, for a whole ring of clear bits.
-static void test_disarmed(void) {
-  task_sieve_reset();
-  assert(task_sieve_set_ring(7, k_ring_all_clear));
-  for (int i = 0; i < 50; i++) {
-    assert(task_sieve_step());
-    assert(task_sieve_phase() == 0);
-  }
-  assert(task_sieve_arm(3));
-  assert(task_sieve_phase() == 3);
-}
-
-// One set bit at phase p releases VOTE on step p and nowhere else, which
-// fails if the ring index is off by one.
+// One set bit at phase p releases VOTE at phase p and nowhere else, which
+// fails if the ring index is off by one. All 128 phases, every bit position.
 static void test_single_bit(void) {
-  const uint8_t modulus = 30;
-  for (uint8_t p = 0; p < modulus; p++) {
+  for (uint8_t p = 0; p < TASK_SIEVE_MODULUS_MAX; p++) {
     uint8_t ring[TASK_SIEVE_RING_BYTES] = {0};
     ring[p >> 3] = (uint8_t)(1u << (p & 7));
 
     task_sieve_reset();
-    assert(task_sieve_set_ring(modulus, ring));
-    assert(task_sieve_arm(0));
-    for (uint8_t i = 0; i < modulus * 2; i++) {
-      assert(task_sieve_step() == ((i % modulus) == p));
+    assert(task_sieve_set_ring(TASK_SIEVE_MODULUS_MAX, ring));
+    for (uint8_t i = 0; i < TASK_SIEVE_MODULUS_MAX; i++) {
+      assert(task_sieve_release(i) == (i == p));
     }
   }
 }
 
-// The phase wraps at the modulus, not at 128.
-static void test_wrap(void) {
+// hal_gpio expands the ring into one byte per phase through
+// task_sieve_release(), and calls it while disarmed: the design doc says
+// SET_RING disarms. Checked over all 128 phases of a pseudo-random ring.
+static void test_release_while_disarmed(void) {
   uint8_t ring[TASK_SIEVE_RING_BYTES];
-  memset(ring, 0xFF, sizeof(ring));
+  unsigned x = 0x2F1D;
+  for (int i = 0; i < TASK_SIEVE_RING_BYTES; i++) {
+    x = (x * 1103515245u + 12345u) & 0x7FFFFFFFu;
+    ring[i] = (uint8_t)(x >> 16);
+  }
 
   task_sieve_reset();
-  assert(task_sieve_set_ring(7, ring));
-  assert(task_sieve_arm(6));
-  assert(task_sieve_step());
-  assert(task_sieve_phase() == 0);
-
-  assert(task_sieve_set_ring(128, ring));
-  assert(task_sieve_arm(127));
-  assert(task_sieve_step());
-  assert(task_sieve_phase() == 0);
+  assert(task_sieve_set_ring(TASK_SIEVE_MODULUS_MAX, ring));
+  assert(!task_sieve_armed());
+  for (uint8_t p = 0; p < TASK_SIEVE_MODULUS_MAX; p++) {
+    assert(task_sieve_release(p) == (bool)((ring[p >> 3] >> (p & 7)) & 1));
+  }
 }
 
 void test_sieve(void) {
   test_vectors();
   test_limits();
-  test_disarmed();
   test_single_bit();
-  test_wrap();
+  test_release_while_disarmed();
 }

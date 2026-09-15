@@ -112,9 +112,9 @@ static void test_scenarios(int *counted) {
       continue;
     }
 
-    unsigned accepted = 0, modulus = 0, phase = 0, armed = 0, led = 0;
-    if (sscanf(line, "frame %63s %u %u %u %u %u", hex, &accepted, &modulus,
-               &phase, &armed, &led) != 6) {
+    unsigned accepted = 0, modulus = 0, armed = 0, led = 0;
+    if (sscanf(line, "frame %63s %u %u %u %u", hex, &accepted, &modulus, &armed,
+               &led) != 5) {
       continue;
     }
     assert(have_scenario);
@@ -127,7 +127,6 @@ static void test_scenarios(int *counted) {
     assert(ok == (accepted != 0));
     assert((last == TASK_CMD_ACK) == (accepted != 0));
     assert(task_sieve_modulus() == (uint8_t)modulus);
-    assert(task_sieve_phase() == (uint8_t)phase);
     assert(task_sieve_armed() == (armed != 0));
     assert(task_cmd_led() == (led != 0));
     frames++;
