@@ -1,6 +1,6 @@
-# 05 — the modulus chorus rehearses
+# 05 - Board bring-up, self-tests
 
-Log: (not published yet)
+[Build log](https://hackaday.io/project/206556-a-tiny-sieve-lehmers-math-machine-in-attinys/log/250782-the-modulus-chorus-rehearses)
 
 Thirty ATtiny412 cards in a stripboard backplane, checked before a run. The
 card firmware gains a CRC-8 checked I2C protocol with a readable status, and a
