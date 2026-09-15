@@ -33,5 +33,4 @@ void hal_system_init(void) {
   _PROTECTED_WRITE(CLKCTRL.MCLKCTRLB, CLKCTRL_PDIV_2X_gc | CLKCTRL_PEN_bm);
 }
 
-// cppcheck-suppress unusedFunction  ; used from hal_twi.c in task 6.
 uint8_t hal_system_reset_flags(void) { return reset_flags; }

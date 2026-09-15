@@ -5,7 +5,9 @@ The card holds a 128-bit ring and a phase counter. On each REQ rising edge it
 reports the ring bit at the current phase (1 releases VOTE, 0 drives VOTE low),
 then advances the phase, wrapping at the modulus rather than at 128. Over I2C
 it takes four commands, each ending in a CRC-8 check byte computed over the
-address byte, the opcode, and the payload.
+address byte, the opcode, and the payload. It answers every command with a
+one-byte response code the host reads back, and a read after an accepted STATUS
+command carries 5 status bytes after that code.
 
 Running this file rewrites vectors_sieve.txt and vectors_cmd.txt. The host
 tests read those files, so `make test` never needs Python.
@@ -75,10 +77,21 @@ def cases():
 
 CRC_POLY = 0x07
 
+FW_VERSION = 0x01
+FLAG_ARMED = 0x40
+TAKEN = 0x00
+FAILED = 0xFF
+
+# RSTCTRL.RSTFR snapshots and phases the status vectors step through. Neither
+# comes from a command, so the model just cycles fixed values through them.
+RESET_FLAGS = [0x01, 0x02, 0x20, 0x3F, 0x00, 0x09]
+STATUS_PHASES = [0, 1, 5, 42, 126, 127]
+
 OP_SET_RING = 0x01
 OP_RESET = 0x02
 OP_ARM = 0x03
 OP_LED = 0x04
+OP_STATUS = 0x05
 
 
 def crc8(data, crc=0x00):
@@ -100,6 +113,8 @@ class Card:
 
     def __init__(self, addr):
         self.addr = addr
+        self.response = FAILED
+        self.last_op = 0
         self.reset()
 
     def reset(self):
@@ -111,6 +126,32 @@ class Card:
         """The bytes a host writes: opcode, payload, then the CRC check byte."""
         body = bytes([opcode]) + bytes(payload)
         return body + bytes([crc8(bytes([self.addr << 1]) + body)])
+
+    def read(self, phase, reset_flags):
+        """What the next I2C read returns: the response code, then any status."""
+        if self.response != TAKEN or self.last_op != OP_STATUS:
+            return bytes([self.response])
+        body = bytes(
+            [
+                phase,
+                (reset_flags & 0x3F) | (FLAG_ARMED if self.armed else 0),
+                self.modulus,
+                FW_VERSION,
+            ]
+        )
+        return (
+            bytes([self.response])
+            + body
+            + bytes([crc8(bytes([(self.addr << 1) | 1]) + body)])
+        )
+
+    def run(self, opcode, payload):
+        """One command frame: applies it and latches the response code."""
+        ok = self.apply(opcode, payload)
+        self.response = TAKEN if ok else FAILED
+        if ok:
+            self.last_op = opcode
+        return ok
 
     def apply(self, opcode, payload):
         """Runs one command. False means the card NACKs the CRC byte."""
@@ -134,6 +175,8 @@ class Card:
                 return False
             self.led = payload[0] != 0
             return True
+        if opcode == OP_STATUS:
+            return True
         return False
 
 
@@ -154,25 +197,33 @@ def scenarios():
     ring7 = lcg_ring(7)
     yield 0x10, [
         (OP_SET_RING, bytes([7]) + ring7),
+        (OP_STATUS, []),
         (OP_ARM, [3]),
-        (OP_LED, [1]),  # Rejected: LED is accepted only while disarmed.
+        (OP_STATUS, []),
+        (OP_LED, [1]),  # Fails: LED is taken only while disarmed.
+        (OP_STATUS, []),
         (OP_RESET, []),
         (OP_LED, [1]),
         (OP_LED, [0]),
     ]
     yield 0x2D, [
-        (OP_ARM, [0]),  # Rejected: no ring loaded.
+        (OP_ARM, [0]),  # Fails: no ring loaded.
         (OP_SET_RING, bytes([MODULUS_MIN - 1]) + bytes(RING_BYTES)),
         (OP_SET_RING, bytes([MODULUS_MAX + 1]) + bytes(RING_BYTES)),
         (OP_SET_RING, bytes([MODULUS_MAX]) + b"\xff" * RING_BYTES),
-        (OP_ARM, [MODULUS_MAX]),  # Rejected: phase is not below the modulus.
+        (OP_ARM, [MODULUS_MAX]),  # Fails: phase is not below the modulus.
+        (OP_STATUS, []),
         (OP_ARM, [MODULUS_MAX - 1]),
+        (OP_STATUS, []),
     ]
     yield 0x11, [
         (OP_SET_RING, bytes([2]) + set_bits([0])),
         (OP_ARM, [1]),
-        (OP_SET_RING, bytes([3]) + set_bits([2])),  # Accepted, and disarms.
+        (OP_SET_RING, bytes([3]) + set_bits([2])),  # Taken, and disarms.
+        (OP_STATUS, []),
         (OP_LED, [0x80]),  # Any non-zero state lights the LED.
+        (OP_STATUS, []),
+        (OP_ARM, [3]),  # Fails: a read after it returns the code alone.
     ]
 
 
@@ -184,19 +235,25 @@ def write_cmd_vectors(path):
         "# frame <bytes written, hex, CRC byte last> <accepted 0|1>"
         " <modulus> <armed 0|1> <led 0|1>",
         "# The three state fields are the card state after that frame.",
+        "# read <phase> <RSTFR snapshot, hex> <bytes the next I2C read returns, hex>",
+        "# One read line follows each frame line, for the state it left.",
     ]
     for data in crc_cases():
         lines.append(f"crc {data.hex()} {crc8(data):02x}")
     for addr, commands in scenarios():
         lines.append(f"scenario {addr:02x}")
         card = Card(addr)
-        for opcode, payload in commands:
+        for index, (opcode, payload) in enumerate(commands):
             frame = card.frame(opcode, payload)
-            ok = card.apply(opcode, payload)
+            ok = card.run(opcode, payload)
             lines.append(
                 f"frame {frame.hex()} {int(ok)} {card.modulus}"
                 f" {int(card.armed)} {int(card.led)}"
             )
+            phase = STATUS_PHASES[index % len(STATUS_PHASES)]
+            flags = RESET_FLAGS[index % len(RESET_FLAGS)]
+            read = card.read(phase, flags)
+            lines.append(f"read {phase} {flags:02x} {read.hex()}")
     path.write_text("\n".join(lines) + "\n")
     print(f"wrote {path}")
 

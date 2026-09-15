@@ -1,6 +1,7 @@
 #ifndef HAL_GPIO_H
 #define HAL_GPIO_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 // Pins for one card: PA6 REQ in, PA3 VOTE out, PA7 LED out.
@@ -24,6 +25,10 @@ void hal_gpio_arm(uint8_t phase);
 // Disables the PA6 edge, releases VOTE and darkens the LED. The phase stops
 // where it was; a later hal_gpio_arm() chooses where it resumes.
 void hal_gpio_disarm(void);
+
+// Lights the LED or darkens it. Only legal while disarmed: armed, the REQ
+// handler owns the same register and the LED follows VOTE.
+void hal_gpio_led(bool on);
 
 // Phase the next REQ rising edge will act on. Status-read byte 0.
 uint8_t hal_gpio_phase(void);

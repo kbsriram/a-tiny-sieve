@@ -171,8 +171,6 @@ void hal_gpio_arm(uint8_t phase) {
   SREG = sreg;
 }
 
-// cppcheck-suppress unusedFunction  ; called after every accepted RESET or
-// SET_RING from the dispatch loop in task 7.
 void hal_gpio_disarm(void) {
   // An edge arriving part-way through would re-drive VOTE after the release
   // below. Hold off interrupts for the four writes.
@@ -192,8 +190,13 @@ void hal_gpio_disarm(void) {
   SREG = sreg;
 }
 
-// cppcheck-suppress unusedFunction  ; status-read byte 0, read by hal_twi.c
-// in task 6.
+void hal_gpio_led(bool on) {
+  // Disarmed, DIR is 0 and no interrupt can change it, so a plain write needs
+  // no guard. VPORTA.DIR is below address 64 and avr-gcc reaches it with OUT,
+  // the work-around errata DS80000933D asks for.
+  VPORTA.DIR = on ? PIN7_bm : 0;
+}
+
 uint8_t hal_gpio_phase(void) {
   // The pointer is one phase ahead of the value in r2, and never sits at
   // s_dir[0]: the handler reloads it and reads through it in one step.

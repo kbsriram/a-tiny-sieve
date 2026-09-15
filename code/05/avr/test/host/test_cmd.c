@@ -99,6 +99,7 @@ static void test_scenarios(int *counted) {
   char line[256];
   char hex[MAX_HEX + 24];
   int frames = 0;
+  int reads = 0;
   bool have_scenario = false;
 
   while (fgets(line, sizeof(line), f) != NULL) {
@@ -109,6 +110,18 @@ static void test_scenarios(int *counted) {
       assert(!task_sieve_armed());
       assert(!task_cmd_led());
       have_scenario = true;
+      continue;
+    }
+
+    unsigned phase = 0, flags = 0;
+    if (sscanf(line, "read %u %2x %63s", &phase, &flags, hex) == 3) {
+      uint8_t want[TASK_CMD_READ_MAX];
+      const uint8_t n = parse_hex(hex, want, TASK_CMD_READ_MAX);
+      uint8_t got[TASK_CMD_READ_MAX];
+      const uint8_t len = task_cmd_read((uint8_t)phase, (uint8_t)flags, got);
+      assert(len == n);
+      assert(memcmp(got, want, len) == 0);
+      reads++;
       continue;
     }
 
@@ -133,7 +146,77 @@ static void test_scenarios(int *counted) {
   }
   fclose(f);
   assert(frames >= 12);
+  assert(reads == frames);
   *counted = frames;
+}
+
+// The read CRC must cover the four status bytes and the address byte with the
+// read bit set. Changing any one of them must change the CRC byte.
+static void test_status_crc_coverage(void) {
+  const uint8_t addr = 0x10;
+  uint8_t frame[MAX_FRAME];
+  uint8_t out[TASK_CMD_READ_MAX];
+
+  // Load a ring and arm, so the modulus and the armed bit are both set.
+  task_cmd_init(addr);
+  uint8_t payload[1 + TASK_SIEVE_RING_BYTES];
+  payload[0] = 30;
+  memcpy(&payload[1], k_ring_zero, TASK_SIEVE_RING_BYTES);
+  uint8_t n =
+      build(addr, TASK_CMD_OP_SET_RING, payload, sizeof(payload), frame);
+  assert(feed(frame, n, NULL));
+  const uint8_t arm_phase[1] = {4};
+  n = build(addr, TASK_CMD_OP_ARM, arm_phase, 1, frame);
+  assert(feed(frame, n, NULL));
+
+  // Before a STATUS, a read is the response code alone.
+  assert(task_cmd_read(5, 0x01, out) == 1);
+  assert(out[0] == TASK_CMD_TAKEN);
+
+  n = build(addr, TASK_CMD_OP_STATUS, NULL, 0, frame);
+  assert(feed(frame, n, NULL));
+  uint8_t armed[TASK_CMD_READ_MAX];
+  assert(task_cmd_read(5, 0x01, armed) == TASK_CMD_READ_MAX);
+  assert(armed[0] == TASK_CMD_TAKEN);
+  assert(armed[1] == 5);
+  assert(armed[2] == (0x01 | TASK_CMD_FLAG_ARMED));
+  assert(armed[3] == 30);
+  assert(armed[4] == TASK_CMD_FW_VERSION);
+
+  // Each status field moves the CRC: the phase, then the RSTFR snapshot.
+  assert(task_cmd_read(6, 0x01, out) == TASK_CMD_READ_MAX);
+  assert(out[5] != armed[5]);
+  assert(task_cmd_read(5, 0x03, out) == TASK_CMD_READ_MAX);
+  assert(out[5] != armed[5]);
+
+  // A CRC over the write address byte would pass a status read off as a
+  // command frame. The last byte must not equal that CRC.
+  uint8_t crc_write = task_cmd_crc8_update(0x00, (uint8_t)(addr << 1));
+  for (uint8_t i = 1; i < TASK_CMD_READ_MAX - 1; i++) {
+    crc_write = task_cmd_crc8_update(crc_write, armed[i]);
+  }
+  assert(crc_write != armed[TASK_CMD_READ_MAX - 1]);
+
+  // Every single-bit flip in a status byte changes the CRC byte, so no
+  // corrupted status read can pass the host's check.
+  for (uint8_t byte = 1; byte < TASK_CMD_READ_MAX - 1; byte++) {
+    for (uint8_t bit = 0; bit < 8; bit++) {
+      uint8_t crc = task_cmd_crc8_update(0x00, (uint8_t)((addr << 1) | 1));
+      for (uint8_t i = 1; i < TASK_CMD_READ_MAX - 1; i++) {
+        const uint8_t b =
+            (i == byte) ? (uint8_t)(armed[i] ^ (1u << bit)) : armed[i];
+        crc = task_cmd_crc8_update(crc, b);
+      }
+      assert(crc != armed[TASK_CMD_READ_MAX - 1]);
+    }
+  }
+
+  // A failed command after a STATUS leaves only the response code to read.
+  const uint8_t bad_phase[1] = {30};
+  n = build(addr, TASK_CMD_OP_ARM, bad_phase, 1, frame);
+  assert(!feed(frame, n, NULL));
+  assert(task_cmd_read(5, 0x01, out) == 1);
+  assert(out[0] == TASK_CMD_FAILED);
 }
 
 // Total frame bytes for an opcode, CRC byte included, or 0 when the card does
@@ -152,10 +235,11 @@ static uint8_t frame_len_for(uint8_t op) {
   }
 }
 
-// Flipping any one bit of a valid frame must leave task_cmd_end() false. The
-// last byte also NACKs, except where the flip landed on the opcode and turned
-// it into a command whose frame is longer: the host then stops early and no
-// byte is left to NACK.
+// Flipping any one bit of a valid frame must leave task_cmd_end() false, and
+// the response code the host reads next must be TASK_CMD_FAILED. The decoder
+// also returns NACK on the last byte, except where the flip landed on the
+// opcode and turned it into a command whose frame is longer: the host then
+// stops early and no byte is left to judge.
 static void test_single_bit_flips(void) {
   const uint8_t addr = 0x12;
   uint8_t ring[TASK_SIEVE_RING_BYTES];
@@ -207,6 +291,10 @@ static void test_single_bit_flips(void) {
         if (flipped_len <= len) {
           assert(last == TASK_CMD_NACK);
         }
+
+        uint8_t out[TASK_CMD_READ_MAX];
+        assert(task_cmd_read(0, 0, out) == 1);
+        assert(out[0] == TASK_CMD_FAILED);
       }
     }
 
@@ -222,6 +310,9 @@ static void test_single_bit_flips(void) {
     task_cmd_ack_t last = TASK_CMD_NACK;
     assert(feed(good, len, &last));
     assert(last == TASK_CMD_ACK);
+    uint8_t out[TASK_CMD_READ_MAX];
+    assert(task_cmd_read(0, 0, out) == 1);
+    assert(out[0] == TASK_CMD_TAKEN);
   }
 }
 
@@ -234,7 +325,7 @@ static void test_malformed_frames(void) {
 
   // Unknown opcode: NACKed on the opcode byte itself, before any payload.
   for (unsigned op = 0; op < 256; op++) {
-    if (op >= TASK_CMD_OP_SET_RING && op <= TASK_CMD_OP_LED) {
+    if (op >= TASK_CMD_OP_SET_RING && op <= TASK_CMD_OP_STATUS) {
       continue;
     }
     task_cmd_init(addr);
@@ -256,6 +347,9 @@ static void test_malformed_frames(void) {
     assert(!feed(good, cut, NULL));
     assert(task_sieve_modulus() == 0);
     assert(!task_sieve_armed());
+    uint8_t out[TASK_CMD_READ_MAX];
+    assert(task_cmd_read(0, 0, out) == 1);
+    assert(out[0] == TASK_CMD_FAILED);
   }
 
   // Overlong frame: the byte after the CRC byte NACKs.
@@ -304,14 +398,18 @@ void test_cmd(void) {
   printf("PASS: CRC-8 PEC, %d vectors from model.py\n", crcs);
 
   test_scenarios(&frames);
-  printf("PASS: command scenarios, %d frames from model.py\n", frames);
+  printf("PASS: command scenarios and reads, %d frames from model.py\n",
+         frames);
 
   test_single_bit_flips();
-  printf("PASS: every single-bit flip NACKs the last byte\n");
+  printf("PASS: every single-bit flip fails the frame\n");
 
   test_malformed_frames();
   printf("PASS: unknown opcode, short frame, overlong frame\n");
 
   test_address_is_in_the_crc();
   printf("PASS: the address byte is folded into the command CRC\n");
+
+  test_status_crc_coverage();
+  printf("PASS: the read returns the response code, and the status CRC\n");
 }
