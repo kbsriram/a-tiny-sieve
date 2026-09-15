@@ -18,12 +18,15 @@ One directory per build log, each with its own README:
 - [code/02](code/02) — [Sieving versus checking](https://hackaday.io/project/206556-a-tiny-sieve-lehmers-math-machine-in-attinys/log/250562-sieving-versus-checking).
   Rings loaded over I2C, clocked at 50 kHz by the Pico's PIO, survivors tested
   on the Pico. Factors 5,283,065,753,709,209.
-- [code/04](code/04) — Testing cards before they ship. Flash a diagnostic
-  image, check the header pins from a Pico, then flash the real firmware.
+- [code/04](code/04) — [Qualify the moduli](https://hackaday.io/project/206556-a-tiny-sieve-lehmers-math-machine-in-attinys/log/250711-qualify-the-moduli).
+  Testing cards before they ship. Flash a diagnostic image, check the header
+  pins from a Pico, then flash the real firmware.
+- [code/05](code/05) — Thirty cards on a stripboard backplane. Self-checks over
+  I2C before a run, and the REQ-to-VOTE timing measured with all thirty fitted.
 
 Each build pairs an `avr/` half (ATtiny412 firmware in C, avr-gcc) with an
 `rpi/` half (Pico host code). The Pico runtime differs per build — build 01 is
-CircuitPython, builds 02 and 04 are MicroPython — so check the build's README
+CircuitPython, builds 02, 04 and 05 are MicroPython — so check the build's README
 before copying files to a board.
 
 # Hardware

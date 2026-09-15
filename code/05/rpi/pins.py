@@ -3,8 +3,7 @@
 REQ, VOTE, SDA and SCL run to all 30 card slots in parallel; the SSD1306 sits on
 the same I2C bus. The jig socket has its own numbers in jig_pins.py.
 
-Read off docs/proposal/sanity_check.diy. Strips run horizontally, so one strip
-is one row. The Pico's right-hand column of pins stands on rows y=2.3 to 3.0,
+Strips run horizontally, so one strip is one row. The Pico's right-hand column of pins stands on rows y=2.3 to 3.0,
 the same rows as the first card slot, with no trace cut between them:
 
     signal   strip   Pico pin   GP
@@ -37,6 +36,6 @@ OLED_ADDR = 0x3C
 OLED_WIDTH = 128
 OLED_HEIGHT = 64
 
-# VOTE is read with the RP2040 pull-up off: the stripboard carries a 700 Ohm to
-# 1.5 kOhm resistor to 3.3 V.
+# VOTE is read with the RP2040 pull-up off. No resistor is fitted: the line is
+# pulled up by the 30 cards' internal pull-ups in parallel, about 1.2 kOhm.
 VOTE_PULLUP = False

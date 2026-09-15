@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Reference model for the card, written from 05_avr_design.md.
+"""Reference model for the card, written from its design notes rather than
+from the C, so a bug would have to appear in both to get through.
 
 The card holds a 128-bit ring and a phase counter. On each REQ rising edge it
 reports the ring bit at the current phase (1 releases VOTE, 0 drives VOTE low),
@@ -21,7 +22,7 @@ MODULUS_MAX = 128
 MODULI = [2, 3, 7, 30, 127, 128]
 STEPS = 400
 
-# The card code/05/pico/req_walk.py loads over I2C for task 7, as
+# One card's REQ walk, as
 # (I2C address, modulus, phases that release VOTE, phase to arm at).
 REQ_CARD = (0x10, 7, [0, 3, 6], 5)
 
@@ -260,7 +261,7 @@ def write_cmd_vectors(path):
 
 
 def write_req_vectors(path):
-    """Expected VOTE level after each REQ edge, for code/05/pico/req_walk.py.
+    """Expected VOTE level after each REQ edge of the one-card walk.
 
     req_walk.py holds a copy of the `expect` line and compares it against what
     it reads on PA3. Copy it again whenever the ring here changes.

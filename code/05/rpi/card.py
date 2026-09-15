@@ -1,7 +1,6 @@
 """One ATtiny412 card over I2C: framing, the five commands, status decode.
 
-Protocol: code/05/avr/src/task/task_cmd.c and docs 05_avr_design.md. Every
-command is an opcode, its payload, then a CRC-8 check byte over the address
+Protocol: code/05/avr/src/task/task_cmd.c. Every command is an opcode, its payload, then a CRC-8 check byte over the address
 byte (addr << 1), the opcode and the payload. The card acknowledges every byte
 and answers with a response code the host reads next: 0x00 taken, 0xff failed.
 A STATUS command is answered by that code and 5 status bytes, the last a CRC
@@ -29,7 +28,7 @@ STATUS_READ = 6
 ADDR_FIRST = 0x10
 ADDR_LAST = 0x2D
 
-# RSTCTRL.RSTFR bits, snapshotted by the card at boot (05_avr_design.md).
+# RSTCTRL.RSTFR bits, snapshotted by the card at boot.
 RSTFR_PORF = 0x01  # Power-on.
 RSTFR_BORF = 0x02  # Brown-out.
 RSTFR_EXTRF = 0x04  # External reset pin.

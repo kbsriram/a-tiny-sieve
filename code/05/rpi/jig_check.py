@@ -1,8 +1,8 @@
 """Card checks run on the Pico from the test jig, for code/05/jig/flash_batch.py.
 
-Two stages, each ending in one sentinel line the PC script parses:
-`RESULT PASS`, or `RESULT FAIL <stage> <message>`. Nothing here exits or raises;
-mpremote's exit code carries no verdict.
+Each stage ends in one sentinel line the PC script parses: `RESULT PASS`, or
+`RESULT FAIL <stage> <message>`. Nothing here exits or raises; mpremote's exit
+code carries no verdict.
 
   electrical  The four checks of code/04/README.md, unchanged. They need the
               log 4 diagnostic image on the card: PA6, PA1, PA2 and PA3 are

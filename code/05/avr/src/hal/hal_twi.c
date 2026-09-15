@@ -25,18 +25,14 @@ static void end_write_frame(void) {
   }
 }
 
-// TWI0 client, vector 19 (ch05). Four cases per ch24: address+write (S1),
-// address+read (S2), STOP (S3), collision (S4). Every byte is ACKed; the
-// outcome reaches the host as the response code of the next read.
+// TWI0 client. Four cases: address+write, address+read, STOP, collision.
+// Every byte is ACKed; the outcome reaches the host as the response code of
+// the next read.
 //
-// SCL is held low from the flag until this handler writes SCTRLB, so no byte is
-// ever missed. The longest path, the STATUS CRC over 5 bytes, is about 250
-// cycles or 25 us at 10 MHz, against the 10 us bit period of a 100 kHz bus. No
-// command arrives while the card is armed, so this cannot delay a REQ edge.
-//
-// There is no wait loop here, so nothing can time out. An abandoned
-// transaction leaves the client waiting for a Start, which is what COMPTRANS
-// already asks for, and the next Start resynchronises it.
+// SCL is held low from the flag until this handler writes SCTRLB, so no byte
+// is missed. The longest path is the STATUS CRC, about 25 us at 10 MHz against
+// a 10 us bit period. No command arrives while armed, so a REQ edge is never
+// delayed. No wait loop, so nothing can time out.
 // cppcheck-suppress unusedFunction  ; the vector table calls it.
 ISR(TWI0_TWIS_vect) {
   const uint8_t status = TWI0.SSTATUS;
@@ -89,13 +85,13 @@ ISR(TWI0_TWIS_vect) {
 }
 
 void hal_twi_init(uint8_t addr) {
-  // Re-enable PA1/PA2 input buffers disabled in hal_gpio_init(); add pull-ups
-  // (the only ones on the bus; no external resistor on the card or backplane).
+  // Re-enable the PA1/PA2 input buffers hal_gpio_init() switched off, and add
+  // the pull-ups: no external resistor exists on the card or the backplane.
   PORTA.PIN1CTRL = PORT_PULLUPEN_bm | PORT_ISC_INTDISABLE_gc;
   PORTA.PIN2CTRL = PORT_PULLUPEN_bm | PORT_ISC_INTDISABLE_gc;
 
-  // ch24: SADDR holds the 7-bit address in bits 7:1. Bit 0 would also answer
-  // the general call address 0x00, so it stays 0.
+  // Address in bits 7:1. Bit 0 would also answer the general call, so it
+  // stays 0.
   TWI0.SADDR = (uint8_t)(addr << 1);
 
   s_read_len = 0;
@@ -109,12 +105,10 @@ void hal_twi_init(uint8_t addr) {
 }
 
 bool hal_twi_take_command(void) {
-  // The ISR only sets this flag and main.c only clears it, so no cli is needed
-  // and the main loop never disables interrupts while the card is armed.
+  // The ISR only sets this flag and main.c only clears it, so no cli is needed.
   if (!s_ready) {
     return false;
   }
   s_ready = false;
   return true;
 }
-

@@ -3,10 +3,9 @@
 128x64 at 0x3C on the same I2C bus as the cards. The 8x8 font gives 16
 characters across and 8 lines down.
 
-A full redraw sends the whole 1024-byte framebuffer: 92 ms at 100 kHz, and the
-init measured 114 ms. The card firmware takes no I2C traffic while a card is
-armed, so a redraw belongs where the cards are disarmed or the REQ generator is
-stopped. pins.I2C_TIMEOUT_US must stay above those figures.
+A full redraw sends 1024 bytes, 92 ms at 100 kHz; the init measured 114 ms, so
+pins.I2C_TIMEOUT_US must stay above that. Cards take no I2C traffic while armed,
+so a redraw belongs where they are disarmed or the REQ generator is stopped.
 
 A missing display is not an error. Panel.present is False and every call does
 nothing, so the same code runs with the OLED unfitted.

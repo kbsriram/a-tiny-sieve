@@ -9,7 +9,7 @@ ring. A card that fails any step does not consume an address.
 Both builds happen before the card is touched, so a broken toolchain or a source
 error stops the run rather than leaving a half-programmed card in the socket.
 
-Design: docs/proposal/log/05_jig_design.md. Jig wiring: code/04/README.md.
+Jig wiring: code/04/README.md.
 
   python3 flash_batch.py                  # batch loop over 30 addresses
   python3 flash_batch.py --addr 0x17      # one card at a fixed address

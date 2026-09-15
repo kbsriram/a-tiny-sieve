@@ -1,4 +1,4 @@
-"""Checks the fitted cards before a run, for section 4 of the log 5 outline.
+"""Checks the fitted cards before a run.
 
 One open-drain VOTE line carries 30 drivers and has no error detection: a card
 stuck low rejects valid candidates, the run finishes, and nothing is reported.
@@ -129,7 +129,7 @@ def check_led_walk(bank, panel):
     refused = []
     for addr in bank.addrs:
         slot = bank.slot(addr)
-        panel.show("LED walk", "", "slot %d of %d" % (slot, len(bank.addrs)),
+        panel.show("self-test", "", "slot %d of %d" % (slot, len(bank.addrs)),
                    "addr 0x%02x" % addr)
         bank.req_low()
         try:
