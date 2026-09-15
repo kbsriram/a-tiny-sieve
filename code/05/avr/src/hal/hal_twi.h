@@ -23,9 +23,4 @@ void hal_twi_init(uint8_t addr);
 // command to the pins. Clears the flag, so a second call returns false.
 bool hal_twi_take_command(void);
 
-// Same flag, left set. main.c tests it with interrupts disabled, just before
-// SLEEP, so a command accepted after the last hal_twi_take_command() is applied
-// now instead of waiting for the host's next byte.
-bool hal_twi_command_pending(void);
-
 #endif  // HAL_TWI_H
