@@ -6,13 +6,11 @@
 #include "hal/hal_twi.h"
 #include "task/task_cmd.h"
 
-// Pins for the command hal_twi just accepted. task_cmd has already changed the
-// ring, the modulus and the armed flag; only the pins are left to follow.
+// Apply pin-level effects of the command task_cmd already decoded.
 static void apply_command(void) {
   switch (task_cmd_accepted_op()) {
     case TASK_CMD_OP_SET_RING:
-      // Disarming clears the LED as well, so put it back: SET_RING changes the
-      // ring and the armed state, not the LED.
+      // SET_RING disarms (clearing the LED); restore the LED state after.
       hal_gpio_disarm();
       hal_gpio_set_ring();
       hal_gpio_led(task_cmd_led());
@@ -33,24 +31,18 @@ static void apply_command(void) {
 
 int main(void) {
   hal_system_init();
-
-  // Pins first: VOTE and the LED are high-impedance until a command or a REQ
+  // Pins first: VOTE and the LED stay high-impedance until a command or a REQ
   // edge changes them.
   hal_gpio_init();
 
-  // Both take the address: task_cmd folds `I2C_ADDR << 1` into every command
-  // CRC, hal_twi matches on it.
+  // Same address twice: task_cmd seeds every CRC with it, hal_twi matches it.
   task_cmd_init(I2C_ADDR);
   hal_twi_init(I2C_ADDR);
 
   sei();
 
-  // Boot state, unchanged until a command arrives: disarmed, phase 0, no ring,
-  // VOTE high-impedance, LED dark. Every REQ edge is handled in
-  // ISR(PORTA_PORT_vect) and every I2C byte in ISR(TWI0_TWIS_vect).
-  //
-  // This loop never sleeps and never clears the global interrupt enable, so a
-  // REQ edge always reaches the handler in the cycles hal_gpio.c counts.
+  // Never sleeps, never disables interrupts: every REQ edge reaches the handler
+  // in the cycle count hal_gpio.c guarantees.
   while (1) {
     if (hal_twi_take_command()) {
       apply_command();

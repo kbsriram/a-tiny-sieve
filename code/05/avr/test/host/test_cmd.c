@@ -6,6 +6,7 @@
 
 #include "task/task_cmd.h"
 #include "task/task_sieve.h"
+#include "test_util.h"
 
 #ifndef VECTORS_CMD_PATH
 #define VECTORS_CMD_PATH "../ref/vectors_cmd.txt"
@@ -14,22 +15,6 @@
 // Longest frame: SET_RING is the opcode, 17 payload bytes, and the CRC byte.
 #define MAX_FRAME (1 + TASK_CMD_MAX_PAYLOAD + 1)
 #define MAX_HEX (MAX_FRAME * 2 + 2)
-
-static const uint8_t k_ring_zero[TASK_SIEVE_RING_BYTES] = {0};
-
-// Parses hex text into bytes. Returns the byte count.
-static uint8_t parse_hex(const char *hex, uint8_t *out, uint8_t cap) {
-  const size_t chars = strlen(hex);
-  assert(chars % 2 == 0);
-  assert(chars / 2 <= cap);
-  for (size_t i = 0; i < chars / 2; i++) {
-    unsigned byte = 0;
-    const int fields = sscanf(hex + i * 2, "%2x", &byte);
-    assert(fields == 1);
-    out[i] = (uint8_t)byte;
-  }
-  return (uint8_t)(chars / 2);
-}
 
 // Writes one frame to the decoder. Stores the ACK/NACK of the last byte in
 // `last` and returns what task_cmd_end() reported.
@@ -60,6 +45,22 @@ static uint8_t build(uint8_t addr, uint8_t op, const uint8_t *payload,
   return (uint8_t)(payload_len + 2);
 }
 
+// Builds a full SET_RING frame for `modulus` and `ring`. Returns its length.
+static uint8_t build_set_ring(uint8_t addr, uint8_t modulus,
+                              const uint8_t *ring, uint8_t *out) {
+  uint8_t payload[1 + TASK_SIEVE_RING_BYTES];
+  payload[0] = modulus;
+  memcpy(&payload[1], ring, TASK_SIEVE_RING_BYTES);
+  return build(addr, TASK_CMD_OP_SET_RING, payload, sizeof(payload), out);
+}
+
+// Sends that frame and asserts the card took it.
+static void load_ring(uint8_t addr, uint8_t modulus, const uint8_t *ring) {
+  uint8_t frame[MAX_FRAME];
+  const uint8_t n = build_set_ring(addr, modulus, ring, frame);
+  assert(feed(frame, n, NULL));
+}
+
 // The CRC-8 PEC over byte strings the Python model also folded.
 static void test_crc_vectors(int *counted) {
   FILE *f = fopen(VECTORS_CMD_PATH, "r");
@@ -77,7 +78,7 @@ static void test_crc_vectors(int *counted) {
       continue;
     }
     uint8_t data[32];
-    const uint8_t len = parse_hex(hex, data, (uint8_t)sizeof(data));
+    const uint8_t len = test_parse_hex(hex, data, (uint8_t)sizeof(data));
     uint8_t crc = 0x00;
     for (uint8_t i = 0; i < len; i++) {
       crc = task_cmd_crc8_update(crc, data[i]);
@@ -116,7 +117,7 @@ static void test_scenarios(int *counted) {
     unsigned phase = 0, flags = 0;
     if (sscanf(line, "read %u %2x %63s", &phase, &flags, hex) == 3) {
       uint8_t want[TASK_CMD_READ_MAX];
-      const uint8_t n = parse_hex(hex, want, TASK_CMD_READ_MAX);
+      const uint8_t n = test_parse_hex(hex, want, TASK_CMD_READ_MAX);
       uint8_t got[TASK_CMD_READ_MAX];
       const uint8_t len = task_cmd_read((uint8_t)phase, (uint8_t)flags, got);
       assert(len == n);
@@ -133,7 +134,7 @@ static void test_scenarios(int *counted) {
     assert(have_scenario);
 
     uint8_t frame[MAX_FRAME];
-    const uint8_t len = parse_hex(hex, frame, MAX_FRAME);
+    const uint8_t len = test_parse_hex(hex, frame, MAX_FRAME);
     task_cmd_ack_t last = TASK_CMD_ACK;
     const bool ok = feed(frame, len, &last);
 
@@ -159,14 +160,9 @@ static void test_status_crc_coverage(void) {
 
   // Load a ring and arm, so the modulus and the armed bit are both set.
   task_cmd_init(addr);
-  uint8_t payload[1 + TASK_SIEVE_RING_BYTES];
-  payload[0] = 30;
-  memcpy(&payload[1], k_ring_zero, TASK_SIEVE_RING_BYTES);
-  uint8_t n =
-      build(addr, TASK_CMD_OP_SET_RING, payload, sizeof(payload), frame);
-  assert(feed(frame, n, NULL));
+  load_ring(addr, 30, k_ring_clear);
   const uint8_t arm_phase[1] = {4};
-  n = build(addr, TASK_CMD_OP_ARM, arm_phase, 1, frame);
+  uint8_t n = build(addr, TASK_CMD_OP_ARM, arm_phase, 1, frame);
   assert(feed(frame, n, NULL));
 
   // Before a STATUS, a read is the response code alone.
@@ -275,10 +271,7 @@ static void test_single_bit_flips(void) {
       for (uint8_t bit = 0; bit < 8; bit++) {
         task_cmd_init(addr);
         if (commands[c].needs_ring) {
-          uint8_t setup[MAX_FRAME];
-          const uint8_t n = build(addr, TASK_CMD_OP_SET_RING, set_ring_payload,
-                                  sizeof(set_ring_payload), setup);
-          assert(feed(setup, n, NULL));
+          load_ring(addr, 30, ring);
         }
 
         uint8_t bad[MAX_FRAME];
@@ -302,10 +295,7 @@ static void test_single_bit_flips(void) {
     // and not a decoder that NACKs everything.
     task_cmd_init(addr);
     if (commands[c].needs_ring) {
-      uint8_t setup[MAX_FRAME];
-      const uint8_t n = build(addr, TASK_CMD_OP_SET_RING, set_ring_payload,
-                              sizeof(set_ring_payload), setup);
-      assert(feed(setup, n, NULL));
+      load_ring(addr, 30, ring);
     }
     task_cmd_ack_t last = TASK_CMD_NACK;
     assert(feed(good, len, &last));
@@ -319,9 +309,6 @@ static void test_single_bit_flips(void) {
 // Unknown opcode, a frame that stops early, and a frame with a trailing byte.
 static void test_malformed_frames(void) {
   const uint8_t addr = 0x10;
-  uint8_t payload[1 + TASK_SIEVE_RING_BYTES];
-  payload[0] = 7;
-  memcpy(&payload[1], k_ring_zero, TASK_SIEVE_RING_BYTES);
 
   // Unknown opcode: NACKed on the opcode byte itself, before any payload.
   for (unsigned op = 0; op < 256; op++) {
@@ -337,8 +324,7 @@ static void test_malformed_frames(void) {
   }
 
   uint8_t good[MAX_FRAME];
-  const uint8_t len =
-      build(addr, TASK_CMD_OP_SET_RING, payload, sizeof(payload), good);
+  const uint8_t len = build_set_ring(addr, 7, k_ring_clear, good);
 
   // Short frame: every truncation stops before the CRC byte, so nothing is
   // applied. There is no byte left to NACK.
@@ -375,13 +361,7 @@ static void test_address_is_in_the_crc(void) {
   const uint8_t phase[1] = {1};
 
   task_cmd_init(0x11);
-  uint8_t setup[MAX_FRAME];
-  uint8_t payload[1 + TASK_SIEVE_RING_BYTES];
-  payload[0] = 3;
-  memcpy(&payload[1], k_ring_zero, TASK_SIEVE_RING_BYTES);
-  const uint8_t setup_len =
-      build(0x11, TASK_CMD_OP_SET_RING, payload, sizeof(payload), setup);
-  assert(feed(setup, setup_len, NULL));
+  load_ring(0x11, 3, k_ring_clear);
 
   const uint8_t len = build(0x12, TASK_CMD_OP_ARM, phase, 1, frame);
   assert(!feed(frame, len, NULL));

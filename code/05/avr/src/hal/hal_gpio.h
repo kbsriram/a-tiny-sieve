@@ -22,8 +22,9 @@ void hal_gpio_set_ring(void);
 // hal_gpio_set_ring() must have run since the last SET_RING.
 void hal_gpio_arm(uint8_t phase);
 
-// Disables the PA6 edge, releases VOTE, darkens the LED and returns the phase
-// to 0, which is what both disarming commands, RESET and SET_RING, specify.
+// Disables the PA6 edge, releases VOTE and returns the phase to 0. It clears
+// the LED too, because VOTE and the LED share one VPORTA.DIR write; RESET wants
+// that, SET_RING does not, so main.c restores the LED after a SET_RING.
 void hal_gpio_disarm(void);
 
 // Lights the LED or darkens it. Only legal while disarmed: armed, the REQ

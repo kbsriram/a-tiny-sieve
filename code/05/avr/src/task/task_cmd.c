@@ -2,16 +2,15 @@
 
 #include "task_sieve.h"
 
-// Payload length returned for an opcode the card does not implement.
-#define PAYLOAD_UNKNOWN 0xFF
+#define PAYLOAD_UNKNOWN 0xFF  // Returned for an unrecognised opcode.
 
 static uint8_t s_addr_byte;  // addr << 1, the first byte of every command CRC.
-static uint8_t s_crc;        // Running CRC over the bytes seen so far.
+static uint8_t s_crc;        // Running CRC over this frame's bytes so far.
 static uint8_t s_index;      // Bytes received in this frame, opcode included.
 static uint8_t s_op;
 static uint8_t s_payload[TASK_CMD_MAX_PAYLOAD];
-static bool s_nack;      // A byte in this frame was NACKed.
-static bool s_accepted;  // The CRC byte matched and the command was applied.
+static bool s_nack;
+static bool s_accepted;  // CRC matched and command applied on this frame.
 static bool s_led;
 static uint8_t s_done_op;     // Opcode of the last accepted command.
 static uint8_t s_done_phase;  // Phase the last accepted ARM carried.
@@ -29,7 +28,7 @@ uint8_t task_cmd_crc8_update(uint8_t crc, uint8_t data) {
   return crc;
 }
 
-// Payload bytes between the opcode and the CRC byte, per design doc Commands.
+// Payload bytes for each opcode (between the opcode and the CRC byte).
 static uint8_t payload_len(uint8_t op) {
   switch (op) {
     case TASK_CMD_OP_SET_RING:
@@ -47,7 +46,7 @@ static uint8_t payload_len(uint8_t op) {
   }
 }
 
-// Runs the decoded command. False means NACK the CRC byte and change nothing.
+// Apply the decoded command. False means NACK the CRC byte, change nothing.
 static bool apply(void) {
   switch (s_op) {
     case TASK_CMD_OP_SET_RING:
@@ -65,7 +64,6 @@ static bool apply(void) {
       s_led = (s_payload[0] != 0);
       return true;
     case TASK_CMD_OP_STATUS:
-      // Changes nothing: it only decides what the next read returns.
       return true;
     default:
       return false;
@@ -126,7 +124,7 @@ task_cmd_ack_t task_cmd_byte(uint8_t data) {
     return TASK_CMD_ACK;
   }
 
-  s_nack = true;  // A byte after the CRC byte: the frame is too long.
+  s_nack = true;  // Byte after the CRC: frame is too long.
   return TASK_CMD_NACK;
 }
 
@@ -143,18 +141,16 @@ uint8_t task_cmd_accepted_op(void) { return s_done_op; }
 
 uint8_t task_cmd_accepted_phase(void) { return s_done_phase; }
 
-// The 4 status bytes and the CRC over them, at `out`.
+// Fills the 4 status bytes and the CRC into `out`.
 static void status(uint8_t phase, uint8_t reset_flags, uint8_t *out) {
   out[0] = phase;
-  // RSTFR has six flags, so bits 6 and 7 of the snapshot are always 0 and bit
-  // 6 is free for the armed bit. Masking keeps that true whatever is passed.
+  // RSTFR has 6 flags; mask to keep bits 6-7 free (bit 6 = armed flag).
   out[1] = (uint8_t)((reset_flags & 0x3F) |
                      (task_sieve_armed() ? TASK_CMD_FLAG_ARMED : 0));
   out[2] = task_sieve_modulus();
   out[3] = TASK_CMD_FW_VERSION;
 
-  // The CRC starts from the address byte with the read bit set, so a status
-  // read can never be replayed as a command frame and pass its CRC.
+  // Read-bit in CRC seed distinguishes a status read from a command frame.
   uint8_t crc = task_cmd_crc8_update(0x00, (uint8_t)(s_addr_byte | 1));
   for (uint8_t i = 0; i < 4; i++) {
     crc = task_cmd_crc8_update(crc, out[i]);

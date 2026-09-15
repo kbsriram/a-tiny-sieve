@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "task/task_sieve.h"
+#include "test_util.h"
 
 #ifndef VECTORS_PATH
 #define VECTORS_PATH "../ref/vectors_sieve.txt"
@@ -12,17 +13,10 @@
 
 #define MAX_STEPS 1024
 
-static const uint8_t k_ring_all_clear[TASK_SIEVE_RING_BYTES] = {0};
-
-// Parses "<32 hex chars>" into 16 bytes, byte 0 first.
+// Parses "<32 hex chars>" into all 16 ring bytes, byte 0 first.
 static void parse_ring(const char *hex, uint8_t *ring) {
-  assert(strlen(hex) == TASK_SIEVE_RING_BYTES * 2);
-  for (int i = 0; i < TASK_SIEVE_RING_BYTES; i++) {
-    unsigned byte = 0;
-    const int fields = sscanf(hex + i * 2, "%2x", &byte);
-    assert(fields == 1);
-    ring[i] = (uint8_t)byte;
-  }
+  assert(test_parse_hex(hex, ring, TASK_SIEVE_RING_BYTES) ==
+         TASK_SIEVE_RING_BYTES);
 }
 
 // Replays every case in the committed vectors file from the Python model.
@@ -89,18 +83,18 @@ static void test_limits(void) {
   // No ring loaded: ARM is rejected.
   assert(!task_sieve_arm(0));
 
-  assert(!task_sieve_set_ring(0, k_ring_all_clear));
-  assert(!task_sieve_set_ring(1, k_ring_all_clear));
-  assert(!task_sieve_set_ring(129, k_ring_all_clear));
-  assert(!task_sieve_set_ring(255, k_ring_all_clear));
+  assert(!task_sieve_set_ring(0, k_ring_clear));
+  assert(!task_sieve_set_ring(1, k_ring_clear));
+  assert(!task_sieve_set_ring(129, k_ring_clear));
+  assert(!task_sieve_set_ring(255, k_ring_clear));
   assert(task_sieve_modulus() == 0);
 
-  assert(task_sieve_set_ring(2, k_ring_all_clear));
-  assert(task_sieve_set_ring(128, k_ring_all_clear));
+  assert(task_sieve_set_ring(2, k_ring_clear));
+  assert(task_sieve_set_ring(128, k_ring_clear));
   assert(task_sieve_modulus() == 128);
 
   // ARM is rejected at or above the modulus.
-  assert(task_sieve_set_ring(30, k_ring_all_clear));
+  assert(task_sieve_set_ring(30, k_ring_clear));
   assert(!task_sieve_arm(30));
   assert(!task_sieve_arm(255));
   assert(!task_sieve_armed());
@@ -108,7 +102,7 @@ static void test_limits(void) {
   assert(task_sieve_armed());
 
   // SET_RING disarms.
-  assert(task_sieve_set_ring(30, k_ring_all_clear));
+  assert(task_sieve_set_ring(30, k_ring_clear));
   assert(!task_sieve_armed());
 
   // RESET clears the ring as well.

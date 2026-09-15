@@ -6,78 +6,39 @@
 
 #include "task/task_sieve.h"
 
-// VOTE (PA3) and LED (PA7) share one VPORTA.DIR byte. Their OUT bits stay 0
-// for the life of the program, so a 1 in DIR drives the pin low and a 0 leaves
-// it high-impedance and pulled up. 0x88 sinks VOTE and lights the LED.
+// DIR=1 drives low (OUT stays 0 always); 0x88 sinks VOTE and lights the LED.
 #define VOTE_LOW_DIR (PIN3_bm | PIN7_bm)
 
-// One byte per phase, each the VPORTA.DIR value that phase needs.
-//
-// The array is one byte longer than the largest modulus. After reading the
-// last phase the handler leaves X pointing one past it, so an element must
-// exist there. That keeps X inside the array, and every SRAM address is
-// 0x3F00 to 0x3FFF (datasheet ch04), so X's high byte never changes and the
-// handler can wrap by reloading the low byte alone.
+// VPORTA.DIR value per phase. +1 so the handler's X pointer stays in-bounds
+// after the last phase; all SRAM addresses share the same high byte (ch04),
+// so wrapping only reloads the low byte.
 static uint8_t s_dir[TASK_SIEVE_MODULUS_MAX + 1];
 
-// Three registers the REQ handler owns, kept from the compiler by
-// -ffixed-r2 -ffixed-r4 -ffixed-r26 -ffixed-r27 in src/Makefile. Four
-// registers in all: a pointer takes r26 and r27 together.
-//
-//   r2       VPORTA.DIR value the next REQ rising edge writes out.
-//   r26:r27  &s_dir[phase after that one].
-//   r4       low byte of &s_dir[modulus], where the phase wraps to 0.
-//
-// The compiler never allocates them, so no other code can corrupt them. They
-// are call-saved (r2, r4) or unused by the code avr-gcc emits under -ffixed
-// (r26, r27); nothing in this firmware calls a precompiled libgcc routine, so
-// nothing restores them from a build that did not reserve them.
+// Registers owned by the ISR, reserved via -ffixed-r2 -ffixed-r4 -ffixed-r26
+// -ffixed-r27 (Makefile). A pointer occupies r26:r27 together.
+//   r2      VPORTA.DIR value for the next edge.
+//   r26:r27 pointer to s_dir[next phase].
+//   r4      low byte of &s_dir[modulus], the wrap sentinel.
+// All are call-saved or unallocated by avr-gcc under -ffixed; no libgcc
+// routine is called, so nothing would restore them from an unreserved build.
 register uint8_t s_next_dir __asm__("r2");
 register const uint8_t *s_next __asm__("r26");
 register uint8_t s_wrap_lo __asm__("r4");
 
-// REQ rising edge on PA6, vector 3 (datasheet ch05).
+// REQ rising edge, PA6, vector 3 (ch05). ISR_NAKED: avr-gcc's prologue delays
+// the first instruction; OUT must come first to meet the 6-cycle budget.
+// No SREG save: OUT/SBI/CPSE/RJMP/LDI/LD leave all flags unchanged.
+// CPSE instead of CP avoids the flag write that would force a save/restore.
 //
-// Hand-written because avr-gcc emits its register-save prologue before the
-// first C statement, which delays the pin. ISR_NAKED suppresses that, and the
-// first instruction drives PA3.
+// Cycle counts: AVRxt column of DS40002198; 1 cycle = 0.1 us at CLK_PER 10 MHz.
+//   Edge to PA3 sinking: 5 (CPUINT finish+push+rjmp) + 1 (OUT)      = 6 cycles
+//   Edge to RETI done:   6 + 1 (SBI) + 3 (CPSE) + 2 (LD) + 4 (RETI) = 16 cycles
+// Both CPSE paths cost 3 cycles (taken: 2+LDI 1; not taken: 1+RJMP 2), so
+// every phase takes the same time. Task 8 measures both on the scope.
 //
-// The handler writes no SREG flag, so it does not save SREG: OUT, SBI, CPSE,
-// RJMP, LDI and LD all leave the status register alone. CPSE is the compare
-// that costs nothing; CP would have forced a save and restore.
-//
-// Cycle counts are the AVRxt column of the AVR Instruction Set Manual
-// DS40002198, which datasheet ch31 names as this core's reference. At
-// CLK_PER 10 MHz one cycle is 0.1 us.
-//
-//   REQ rising edge to PA3 starting to sink current:
-//     CPUINT response, ch11, 4 KB Flash: finish the instruction in
-//     progress 1, push the return address 2, rjmp from the vector
-//     table 2                                                  5 cycles
-//     OUT                                                      1 cycle
-//                                                    total     6 cycles = 0.6
-//                                                    us
-//
-//   REQ rising edge to RETI complete:
-//     the 6 above                                              6 cycles
-//     SBI                                                      1 cycle
-//     CPSE taken 2 and LDI 1, or CPSE 1 and RJMP 2             3 cycles
-//     LD                                                       2 cycles
-//     RETI, 2-byte program counter, ch11                       4 cycles
-//                                                    total    16 cycles = 1.6
-//                                                    us
-//
-// Both paths through CPSE cost 3 cycles, so every phase takes the same time,
-// wrap or no wrap. Task 8 measures both numbers on the scope.
-//
-// SBI clears the PA6 interrupt flag. It is a read-modify-write of
-// VPORTA.INTFLAGS and writing a 1 clears a flag (ch14), so it also clears any
-// other PORTA flag that happens to be set. No other PA pin has an edge sense
-// configured, and none may be given one, or its flag would be lost here.
-//
-// Errata DS80000933D: a store to an address at or above 64 immediately
-// followed by a store below 64 loses the second store; the listed work-around
-// is to use OUT rather than ST, which is what the first instruction does.
+// SBI is a read-modify-write of VPORTA.INTFLAGS; writing 1 clears any set
+// flag (ch14), so no other PA pin may have an edge sense configured.
+// Errata DS80000933D: store >=64 then <64 loses the second; OUT avoids ST.
 // cppcheck-suppress unusedFunction  ; the vector table calls it.
 ISR(PORTA_PORT_vect, ISR_NAKED) {
   __asm__ volatile(
@@ -100,12 +61,10 @@ ISR(PORTA_PORT_vect, ISR_NAKED) {
         [flags] "I"(_SFR_IO_ADDR(VPORTA.INTFLAGS)), [tbl] "i"(&s_dir[0]));
 }
 
-// Phase 0 with a released VOTE, the state hal_gpio_init() starts in and the one
-// RESET and SET_RING return to. Both callers have already stopped the PA6 edge,
-// so no handler can be part-way through these three registers.
-//
-// The pointer sits at s_dir[1] because the handler keeps it one phase ahead of
-// the value in r2, so hal_gpio_phase() reads back 0.
+// Phase 0, VOTE released. Call only with the PA6 edge disabled.
+// s_next points one ahead of s_next_dir so hal_gpio_phase() returns 0.
+// s_wrap_lo is unread until hal_gpio_arm() sets it; &s_dir[1] is the value
+// already in r26, so the compiler reuses it instead of loading a second one.
 static void rewind_phase(void) {
   s_next_dir = 0;
   s_next = &s_dir[1];
@@ -113,41 +72,20 @@ static void rewind_phase(void) {
 }
 
 void hal_gpio_init(void) {
-  // Datasheet ch14: after reset every pin is an input with the output driver
-  // off. Make that explicit. OUT stays 0 for the life of the program, so no
-  // pin is ever driven high.
-  PORTA.OUT = 0;
+  PORTA.OUT = 0;  // OUT stays 0 forever; DIR drives low or releases.
   PORTA.DIR = 0;
 
-  // PA0 is UPDI. hal_system.c sets SYSCFG0.RSTPINCFG to UPDI, so the UPDI
-  // peripheral owns the pin and PORT does not; switching off the PORT digital
-  // input buffer removes that buffer's supply current. Datasheet ch14.
+  // PA0 UPDI, PA7 LED and PA3 VOTE are never read, and PA1 SDA and PA2 SCL are
+  // not read until hal_twi_init() re-enables their buffers: an input buffer
+  // with no reader only draws current. PA6 REQ with no edge sense is disarmed.
   PORTA.PIN0CTRL = PORT_ISC_INPUT_DISABLE_gc;
-
-  // PA1 SDA and PA2 SCL are unused until task 6 enables TWI0.
   PORTA.PIN1CTRL = PORT_ISC_INPUT_DISABLE_gc;
   PORTA.PIN2CTRL = PORT_ISC_INPUT_DISABLE_gc;
-
-  // PA3 VOTE. The pull-up holds the line high while the pin is an input;
-  // datasheet ch14 says it is disconnected while the pin is an output, so it
-  // never fights the low driver. Nothing reads PA3, so the input buffer is off.
   PORTA.PIN3CTRL = PORT_PULLUPEN_bm | PORT_ISC_INPUT_DISABLE_gc;
-
-  // PA6 REQ: pull-up so an unconnected REQ reads high. ISC is INTDISABLE, the
-  // disarmed state; hal_gpio_arm() switches it to RISING. Datasheet ch14 lists
-  // PA6 as fully asynchronous, so it senses a pulse shorter than one CLK_PER
-  // cycle and imposes no dead time after an interrupt.
   PORTA.PIN6CTRL = PORT_PULLUPEN_bm;
-
-  // PA7 LED, driven low to light it. Nothing reads PA7.
   PORTA.PIN7CTRL = PORT_ISC_INPUT_DISABLE_gc;
 
-  // Datasheet ch14: flags set while the pins were being configured stay set
-  // and would fire as soon as sei() runs. Clear all eight.
-  PORTA.INTFLAGS = 0xFF;
-
-  // Disarmed at phase 0 with no ring: VOTE released, and the handler is not
-  // reachable until hal_gpio_arm() enables the edge.
+  PORTA.INTFLAGS = 0xFF;  // Clear any flags set during pin config before sei().
   rewind_phase();
 }
 
@@ -162,57 +100,40 @@ void hal_gpio_set_ring(void) {
 void hal_gpio_arm(uint8_t phase) {
   const uint8_t modulus = task_sieve_modulus();
 
-  // Re-arming from an armed state is legal, and an edge landing between the
-  // three register writes would mix the old phase with the new one.
   const uint8_t sreg = SREG;
-  cli();
+  cli();  // Prevent a mid-update edge mixing old and new phase registers.
 
-  // The handler holds the next edge's value in r2 and the pointer one phase
-  // ahead of it. phase + 1 is at most the modulus, which is the wrap limit the
-  // handler tests before it dereferences the pointer.
   s_next_dir = s_dir[phase];
-  s_next = &s_dir[phase + 1];
+  s_next = &s_dir[phase + 1];  // One ahead of the value in r2.
   s_wrap_lo = (uint8_t)(uint16_t)&s_dir[modulus];
 
-  // Discard any edge seen while disarmed, then let PA6 interrupt.
-  PORTA.INTFLAGS = PIN6_bm;
+  PORTA.INTFLAGS = PIN6_bm;  // Discard edges seen while disarmed.
   PORTA.PIN6CTRL = PORT_PULLUPEN_bm | PORT_ISC_RISING_gc;
 
   SREG = sreg;
 }
 
 void hal_gpio_disarm(void) {
-  // An edge arriving part-way through would re-drive VOTE after the release
-  // below. Hold off interrupts for the writes.
   const uint8_t sreg = SREG;
-  cli();
+  cli();  // Prevent an edge re-driving VOTE after the release below.
 
   PORTA.PIN6CTRL = PORT_PULLUPEN_bm;
   PORTA.INTFLAGS = PIN6_bm;
-
-  // Errata DS80000933D: PORTA.INTFLAGS is at 0x0409 and VPORTA.DIR at 0x0000,
-  // and a store to the second can be lost. The NOP is one of the two listed
-  // work-arounds, and unlike the other it does not rely on the compiler
-  // choosing OUT over ST.
+  // Errata DS80000933D: a store to an address >= 64 (INTFLAGS) immediately
+  // followed by one below 64 (VPORTA.DIR) loses the second.
   _NOP();
   VPORTA.DIR = 0;
 
-  // RESET and SET_RING are the only commands that disarm, and both specify
-  // phase 0 (05_avr_design.md, section Commands).
   rewind_phase();
-
   SREG = sreg;
 }
 
 void hal_gpio_led(bool on) {
-  // Disarmed, DIR is 0 and no interrupt can change it, so a plain write needs
-  // no guard. VPORTA.DIR is below address 64 and avr-gcc reaches it with OUT,
-  // the work-around errata DS80000933D asks for.
+  // Disarmed: DIR is 0 and the ISR cannot run; no guard needed.
   VPORTA.DIR = on ? PIN7_bm : 0;
 }
 
 uint8_t hal_gpio_phase(void) {
-  // The pointer is one phase ahead of the value in r2, and never sits at
-  // s_dir[0]: the handler reloads it and reads through it in one step.
+  // s_next is one phase ahead of the value held in s_next_dir.
   return (uint8_t)(s_next - &s_dir[0]) - 1;
 }
