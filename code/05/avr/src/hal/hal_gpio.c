@@ -100,6 +100,18 @@ ISR(PORTA_PORT_vect, ISR_NAKED) {
         [flags] "I"(_SFR_IO_ADDR(VPORTA.INTFLAGS)), [tbl] "i"(&s_dir[0]));
 }
 
+// Phase 0 with a released VOTE, the state hal_gpio_init() starts in and the one
+// RESET and SET_RING return to. Both callers have already stopped the PA6 edge,
+// so no handler can be part-way through these three registers.
+//
+// The pointer sits at s_dir[1] because the handler keeps it one phase ahead of
+// the value in r2, so hal_gpio_phase() reads back 0.
+static void rewind_phase(void) {
+  s_next_dir = 0;
+  s_next = &s_dir[1];
+  s_wrap_lo = (uint8_t)(uint16_t)&s_dir[1];
+}
+
 void hal_gpio_init(void) {
   // Datasheet ch14: after reset every pin is an input with the output driver
   // off. Make that explicit. OUT stays 0 for the life of the program, so no
@@ -136,9 +148,7 @@ void hal_gpio_init(void) {
 
   // Disarmed at phase 0 with no ring: VOTE released, and the handler is not
   // reachable until hal_gpio_arm() enables the edge.
-  s_next_dir = 0;
-  s_next = &s_dir[1];
-  s_wrap_lo = (uint8_t)(uint16_t)&s_dir[1];
+  rewind_phase();
 }
 
 void hal_gpio_set_ring(void) {
@@ -173,7 +183,7 @@ void hal_gpio_arm(uint8_t phase) {
 
 void hal_gpio_disarm(void) {
   // An edge arriving part-way through would re-drive VOTE after the release
-  // below. Hold off interrupts for the four writes.
+  // below. Hold off interrupts for the writes.
   const uint8_t sreg = SREG;
   cli();
 
@@ -186,6 +196,10 @@ void hal_gpio_disarm(void) {
   // choosing OUT over ST.
   _NOP();
   VPORTA.DIR = 0;
+
+  // RESET and SET_RING are the only commands that disarm, and both specify
+  // phase 0 (05_avr_design.md, section Commands).
+  rewind_phase();
 
   SREG = sreg;
 }

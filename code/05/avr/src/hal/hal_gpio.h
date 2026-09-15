@@ -22,15 +22,15 @@ void hal_gpio_set_ring(void);
 // hal_gpio_set_ring() must have run since the last SET_RING.
 void hal_gpio_arm(uint8_t phase);
 
-// Disables the PA6 edge, releases VOTE and darkens the LED. The phase stops
-// where it was; a later hal_gpio_arm() chooses where it resumes.
+// Disables the PA6 edge, releases VOTE, darkens the LED and returns the phase
+// to 0, which is what both disarming commands, RESET and SET_RING, specify.
 void hal_gpio_disarm(void);
 
 // Lights the LED or darkens it. Only legal while disarmed: armed, the REQ
 // handler owns the same register and the LED follows VOTE.
 void hal_gpio_led(bool on);
 
-// Phase the next REQ rising edge will act on. Status-read byte 0.
+// Phase the next REQ rising edge will act on. Status-read byte 1.
 uint8_t hal_gpio_phase(void);
 
 #endif  // HAL_GPIO_H

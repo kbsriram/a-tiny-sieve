@@ -135,6 +135,8 @@ void hal_twi_init(uint8_t addr) {
   TWI0.SCTRLA = TWI_DIEN_bm | TWI_APIEN_bm | TWI_PIEN_bm | TWI_ENABLE_bm;
 }
 
+bool hal_twi_command_pending(void) { return s_ready; }
+
 bool hal_twi_take_command(void) {
   // The handler can set the flag between the read and the clear.
   const uint8_t sreg = SREG;
